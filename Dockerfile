@@ -15,4 +15,4 @@ ENV API_BASE_URL="https://api.openai.com/v1"
 ENV MODEL_NAME="gpt-4o-mini"
 ENV HF_TOKEN=""
 
-CMD ["python", "inference.py"]
+CMD ["python", "-m", "inference"]
