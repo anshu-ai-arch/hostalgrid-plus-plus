@@ -10,7 +10,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Force PYTHONPATH via .pth file — guaranteed to work
+# Debug — show what files are actually copied
+RUN echo "=== /app contents ===" && ls -la /app
+RUN echo "=== /app/env contents ===" && ls -la /app/env || echo "env folder MISSING"
+
+# Force path
 RUN echo "/app" > /usr/local/lib/python3.8/site-packages/hostalgrid.pth
 
 ENV API_BASE_URL="https://api.openai.com/v1"
