@@ -1,0 +1,86 @@
+name: hostalgrid-plus-plus
+version: "1.0.0"
+description: >
+  Human-Aware Energy Optimization environment where an AI agent
+  manages hostel energy under constraints of cost, carbon,
+  fairness, and human complaints.
+author: "Anshu Tiwari"
+tags:
+  - energy
+  - reinforcement-learning
+  - human-aware
+  - scheduling
+  - fairness
+
+observation_space:
+  type: object
+  properties:
+    power_usage:
+      type: number
+      description: Total kW consumed
+    avg_temperature:
+      type: number
+      description: Average room temperature in Celsius
+    avg_occupancy:
+      type: number
+      description: Fraction of occupied rooms (0-1)
+    complaint_level:
+      type: integer
+      description: Current complaint count (0-10)
+    time_of_day:
+      type: integer
+      description: Hour of day (0-23)
+    carbon_rate:
+      type: number
+      description: gCO2 per kWh at current hour
+    current_cost:
+      type: number
+      description: Cumulative episode cost in Rs
+
+action_space:
+  type: integer
+  minimum: 0
+  maximum: 5
+  actions:
+    0: "increase_ac"
+    1: "decrease_ac"
+    2: "lights_off_empty"
+    3: "lights_on"
+    4: "defer_heavy_load"
+    5: "do_nothing"
+
+reward:
+  type: number
+  minimum: -50.0
+  maximum: 50.0
+  description: >
+    Multi-objective reward combining energy savings, human comfort,
+    carbon reduction, and fairness across rooms.
+
+tasks:
+  - id: task_easy
+    name: "Commitment-Aware Energy Allocation"
+    difficulty: easy
+    description: >
+      Manage energy while honoring approved supply commitments.
+      40% of rooms have guaranteed minimum supply requirements.
+    max_score: 1.0
+
+  - id: task_medium
+    name: "Fair Enforcement Under Misuse"
+    difficulty: medium
+    description: >
+      Detect and handle selfish energy usage while maintaining
+      fairness across all rooms.
+    max_score: 1.0
+
+  - id: task_hard
+    name: "Crisis Governance Under Extreme Conditions"
+    difficulty: hard
+    description: >
+      Manage energy during heatwaves, exam weeks, and partial
+      outages while preventing system trust collapse.
+    max_score: 1.0
+
+entry_point: "inference.py"
+dockerfile: "Dockerfile"
