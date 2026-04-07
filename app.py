@@ -118,3 +118,12 @@ def scores():
     avg = sum(result.values()) / len(result)
     result["average"] = round(avg, 4)
     return JSONResponse(result)
+
+def main():
+    import app  # or whatever your app's startup logic is
+    # If your app already has a launch/run call at the bottom,
+    # just wrap it in main() like this:
+    pass  # replace with your actual startup code
+
+if __name__ == "__main__":
+    main()
