@@ -22,44 +22,88 @@ TASKS = ["task_easy", "task_medium", "task_hard"]
 
 
 def get_action_from_llm(observation: dict, task_id: str, step: int) -> int:
-    """Ask LLM to choose an action given current observation."""
-    prompt = f"""You are an energy management AI for a hostel.
-Current situation (Hour {step}/24):
-- Power usage: {observation['power_usage']:.2f} kW
-- Avg temperature: {observation['avg_temperature']:.1f}°C
-- Occupancy: {observation['avg_occupancy']:.1%}
-- Complaints: {observation['complaint_level']}
-- Time of day: {observation['time_of_day']}:00
-- Carbon rate: {observation['carbon_rate']:.2f} gCO2/kWh
-- Current cost: Rs {observation['current_cost']:.2f}
-- Task: {task_id}
+    """Smarter prompt — gives LLM context about what to optimize."""
 
-Choose ONE action (respond with just the number 0-5):
-0: increase_ac (comfort up, cost up)
-1: decrease_ac (save energy, complaints may rise)
-2: lights_off_empty (save energy silently)
-3: lights_on (restore lights)
-4: defer_heavy_load (shift appliances to off-peak)
-5: do_nothing
+    # Task-specific guidance
+    task_hints = {
+        "task_easy":   "Priority: NEVER let committed rooms run out of power. Honor all approved requests first.",
+        "task_medium": "Priority: Detect demand spikes and use action 4 to defer heavy loads immediately.",
+        "task_hard":   "Priority: Keep system trust high. Balance comfort and cost. Avoid complaint spikes.",
+    }
+    hint = task_hints.get(task_id, "")
 
-Respond with only a single digit 0-5."""
+    # Time context
+    hour = observation['time_of_day']
+    if 9 <= hour <= 12 or 18 <= hour <= 22:
+        time_context = "PEAK HOURS — electricity is expensive (Rs 8.5/kWh). Prefer saving energy."
+    elif 0 <= hour <= 5:
+        time_context = "NIGHT HOURS — electricity is cheap (Rs 4.0/kWh). Safe to use more."
+    else:
+        time_context = "NORMAL HOURS — moderate cost (Rs 6.0/kWh)."
+
+    prompt = f"""You are EnergyMind, an AI managing energy for a 20-room hostel.
+
+CURRENT STATE (Hour {step}/24):
+- Power usage    : {observation['power_usage']:.2f} kW
+- Avg temperature: {observation['avg_temperature']:.1f}°C  
+- Occupancy      : {observation['avg_occupancy']:.1%} of rooms occupied
+- Complaints     : {observation['complaint_level']} active complaints
+- Carbon rate    : {observation['carbon_rate']:.2f} gCO2/kWh
+- Cost so far    : Rs {observation['current_cost']:.2f}
+- {time_context}
+
+TASK: {task_id}
+STRATEGY: {hint}
+
+ACTIONS:
+0: increase_ac     → comfort up, cost up, complaints drop
+1: decrease_ac     → save energy, complaints may rise
+2: lights_off_empty → silent energy save (best if occupancy low)
+3: lights_on       → restore lights
+4: defer_heavy_load → big energy save, shift loads to off-peak
+5: do_nothing      → hold current state
+
+DECISION RULES:
+- complaints > 3 → choose 0 (increase comfort)
+- peak hours + power > 8kW → choose 4 (defer load)
+- occupancy < 0.4 → choose 2 (lights off empty rooms)
+- power > 10kW at night → choose 1 (decrease AC)
+
+Respond with ONLY a single digit 0-5."""
 
     try:
         response = client.chat.completions.create(
-            model    = MODEL_NAME,
-            messages = [{"role": "user", "content": prompt}],
-            max_tokens = 5,
+            model       = MODEL_NAME,
+            messages    = [{"role": "user", "content": prompt}],
+            max_tokens  = 5,
             temperature = 0.0,
         )
         text   = response.choices[0].message.content.strip()
         action = int(text[0])
         if action not in range(6):
-            action = random.randint(0, 5)
+            action = _rule_based_fallback(observation)
     except Exception:
-        action = random.randint(0, 5)
+        action = _rule_based_fallback(observation)
 
     return action
 
+
+def _rule_based_fallback(observation: dict) -> int:
+    """Smart fallback when LLM fails — uses rules."""
+    hour        = int(observation['time_of_day'])
+    power       = observation['power_usage']
+    complaints  = observation['complaint_level']
+    occupancy   = observation['avg_occupancy']
+
+    if complaints > 3:
+        return 0   # increase AC
+    if (9 <= hour <= 12 or 18 <= hour <= 22) and power > 8:
+        return 4   # defer heavy load during peak
+    if occupancy < 0.4:
+        return 2   # lights off empty rooms
+    if power > 10 and hour < 6:
+        return 1   # decrease AC at night
+    return 5       # do nothing
 
 def run_task(task_id: str) -> float:
     """Run one full episode for a task and return score 0.0-1.0."""
