@@ -1,3 +1,9 @@
+
+🚀 LIVE DEMO 
+
+https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
+
+
 ---
 title: EnergyMind — Human-Aware Energy Optimization
 emoji: ⚡
