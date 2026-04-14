@@ -1,141 +1,388 @@
 # env/hostelgrid_env.py
+# Next-level base environment — realistic complaints, demand constraints,
+# power floor enforcement, individual room tracking
 
 import random
 import numpy as np
+from collections import deque
+
 from env.observation import Observation
-from env.action import ACTIONS, get_action_count
-from env.reward import calculate_reward
+from env.action import (
+    ACTIONS, get_action_count,
+    get_power_delta, get_comfort_delta, get_temp_delta, get_min_power
+)
+from env.reward import calculate_reward, time_of_day_bonus
+
+
+class BaseRoom:
+    """
+    Realistic room model — individual complaint logic,
+    temperature physics, demand constraints.
+    """
+    def __init__(self, room_id: int, num_rooms: int = 20):
+        self.room_id     = room_id
+        self.num_rooms   = num_rooms
+
+        # Occupancy
+        self.is_occupied = random.choice([True, False])
+
+        # Temperature — individual comfort threshold
+        self.temperature          = random.uniform(22.0, 30.0)
+        self.comfort_threshold    = random.uniform(24.0, 28.0)
+        self.temperature_tolerance = random.uniform(1.0, 3.0)
+
+        # Power
+        self.current_supply  = 0.0
+        self.current_demand  = random.uniform(0.5, 2.5)
+        self.base_demand     = self.current_demand
+        self.power_cap       = 5.0
+
+        # Commitment
+        self.has_approved_request = random.random() < 0.30
+        self.min_required_supply  = 1.5 if self.has_approved_request else 0.0
+
+        # Complaint tracking — REALISTIC (not just counter)
+        self.complaint_level    = 0      # 0=none 1=mild 2=moderate 3=severe
+        self.complaint_history  = deque(maxlen=5)
+        self.consecutive_hot    = 0      # steps above threshold
+        self.consecutive_dark   = 0      # steps with lights off while occupied
+
+        # Appliances
+        self.ac_on     = self.is_occupied
+        self.lights_on = self.is_occupied
+
+        # Crisis features
+        self.in_exam_center = random.random() < 0.2
+        self.exam_mode      = False
+        self.flagged_for_misuse     = False
+        self.misuse_penalty_timer   = 0
+        self.demand_history         = deque(maxlen=5)
+
+        # Priority level
+        if self.has_approved_request:
+            self.priority_level = "critical"
+        elif self.in_exam_center:
+            self.priority_level = "high"
+        else:
+            self.priority_level = "normal"
+
+    # ------------------------------------------------------------------
+    def update_temperature(self, action_temp_delta: float):
+        """
+        Realistic temperature physics.
+        Temperature drifts toward ambient (30C) when AC is off.
+        Action changes it by delta.
+        """
+        ambient = 30.0
+        if self.ac_on:
+            # AC running: drift toward 22C
+            self.temperature += (22.0 - self.temperature) * 0.1
+        else:
+            # AC off: drift toward ambient
+            self.temperature += (ambient - self.temperature) * 0.15
+
+        # Apply action delta
+        self.temperature += action_temp_delta
+        self.temperature  = float(np.clip(self.temperature, 10.0, 45.0))
+
+    # ------------------------------------------------------------------
+    def update_complaints(self):
+        """
+        REALISTIC complaint model.
+        Students don't immediately complain — there's a threshold.
+        Consecutive uncomfortable steps = escalating complaints.
+        """
+        if not self.is_occupied:
+            self.complaint_level = 0
+            self.consecutive_hot  = 0
+            self.consecutive_dark = 0
+            return
+
+        hot = self.temperature > self.comfort_threshold + self.temperature_tolerance
+        dark = not self.lights_on
+
+        # Track consecutive discomfort
+        if hot and not self.ac_on:
+            self.consecutive_hot += 1
+        else:
+            self.consecutive_hot = max(0, self.consecutive_hot - 1)
+
+        if dark:
+            self.consecutive_dark += 1
+        else:
+            self.consecutive_dark = 0
+
+        # Escalating complaint level
+        discomfort = self.consecutive_hot + self.consecutive_dark
+
+        if discomfort == 0:
+            self.complaint_level = 0
+        elif discomfort <= 1:
+            self.complaint_level = 1   # mild
+        elif discomfort <= 3:
+            self.complaint_level = 2   # moderate
+        else:
+            self.complaint_level = 3   # severe
+
+        # Exam rooms more sensitive
+        if self.exam_mode and self.complaint_level > 0:
+            self.complaint_level = min(3, self.complaint_level + 1)
+
+        self.complaint_history.append(self.complaint_level)
+
+    # ------------------------------------------------------------------
+    def update_demand(self):
+        """Realistic demand with small random variation."""
+        variation = random.uniform(0.85, 1.15)
+        self.current_demand = float(np.clip(
+            self.base_demand * variation, 0.1, 5.0
+        ))
+        self.demand_history.append(self.current_demand)
+        return self.current_demand
+
+    # ------------------------------------------------------------------
+    def check_violation(self) -> bool:
+        if self.has_approved_request:
+            return self.current_supply < self.min_required_supply
+        return False
+
+    # ------------------------------------------------------------------
+    def get_power_consumption(self) -> float:
+        power = 0.0
+        if self.ac_on:
+            power += 1.5
+        if self.lights_on:
+            power += 0.1
+        return power
 
 
 class HostelGridEnv:
     """
-    Base environment for HostelGrid++.
-    All three task environments inherit from this.
-    Keeps base logic clean — tasks add their own complexity on top.
+    Next-level base RL environment.
+    Realistic complaints, demand constraints, power floor enforcement.
+    10 actions (expanded from 6).
     """
-    def __init__(self, num_rooms=20, episode_hours=24):
-        self.num_rooms      = num_rooms
-        self.episode_hours  = episode_hours
-        self.current_hour   = 0
-        self.done           = False
-        self.obs            = None
+
+    def __init__(self, num_rooms: int = 20, episode_hours: int = 24):
+        self.num_rooms     = num_rooms
+        self.episode_hours = episode_hours
+        self.current_hour  = 0
+        self.done          = False
+
+        self.obs   = None
+        self.rooms = []
+
+        # Episode tracking
+        self._ep_total_complaints = 0
+        self._ep_total_cost       = 0.0
+        self._ep_total_violations = 0
+        self._ep_demand_sat_sum   = 0.0
+        self._ep_steps            = 0
+        self._complaint_history   = deque(maxlen=10)
+
+        # Power floor — hard constraint
+        self.MIN_POWER_KW = 0.5   # hostel cannot go below this
 
     # ------------------------------------------------------------------
     def reset(self):
         self.current_hour = 0
         self.done         = False
 
+        self.rooms = [BaseRoom(i, self.num_rooms) for i in range(self.num_rooms)]
+
+        self._ep_total_complaints = 0
+        self._ep_total_cost       = 0.0
+        self._ep_total_violations = 0
+        self._ep_demand_sat_sum   = 0.0
+        self._ep_steps            = 0
+        self._complaint_history   = deque(maxlen=10)
+
         self.obs = Observation(self.num_rooms)
-        self.obs.power_usage       = random.uniform(5.0, 15.0)
-        self.obs.room_temperatures = [
-            random.uniform(22.0, 30.0) for _ in range(self.num_rooms)
-        ]
-        self.obs.occupancy        = [
-            random.randint(0, 1) for _ in range(self.num_rooms)
-        ]
-        self.obs.complaint_level  = random.randint(0, 3)
-        self.obs.time_of_day      = 0
-        self.obs.carbon_rate      = self._get_carbon_rate(0)
-        self.obs.current_cost     = 0.0
+        self.obs.power_usage       = sum(r.get_power_consumption() for r in self.rooms)
+        self.obs.avg_temperature   = float(np.mean([r.temperature for r in self.rooms]))
+        self.obs.avg_occupancy     = sum(r.is_occupied for r in self.rooms) / self.num_rooms
+        self.obs.complaint_level   = 0
+        self.obs.time_of_day       = 0
+        self.obs.carbon_rate       = self._get_carbon_rate(0)
+        self.obs.current_cost      = 0.0
+        self.obs.peak_hour         = self._is_peak(0)
+        self.obs.solar_output      = self._get_solar(0)
+        self.obs.battery_level     = 0.5
+        self.obs.system_trust      = 1.0
 
         return self.obs.to_vector()
 
     # ------------------------------------------------------------------
-    def step(self, action):
-        prev_complaints  = self.obs.complaint_level
-        power_before     = self.obs.power_usage
+    def step(self, action: int):
+        assert 0 <= action < get_action_count(), f"Invalid action {action}"
 
-        # ── Apply action ──────────────────────────────────────────────
-        if action == 0:     # increase_ac
-            self.obs.power_usage        += 0.8
-            self.obs.complaint_level     = max(
-                0, self.obs.complaint_level - 1
-            )
-            self.obs.room_temperatures   = [
-                t - 1 for t in self.obs.room_temperatures
-            ]
+        prev_power      = self.obs.power_usage
+        prev_complaints = self.obs.complaint_level
 
-        elif action == 1:   # decrease_ac
-            self.obs.power_usage         = max(
-                0, self.obs.power_usage - 0.5
-            )
-            self.obs.complaint_level    += random.randint(0, 2)
+        # ── Get action effects ────────────────────────────────────────
+        power_delta   = get_power_delta(action)
+        comfort_delta = get_comfort_delta(action)
+        temp_delta    = get_temp_delta(action)
+        min_power     = get_min_power(action)
 
-        elif action == 2:   # lights_off_empty
-            empty = self.obs.occupancy.count(0)
-            self.obs.power_usage         = max(
-                0, self.obs.power_usage - 0.1 * empty
-            )
+        # ── Update room temperatures ──────────────────────────────────
+        for room in self.rooms:
+            room.update_temperature(temp_delta / self.num_rooms)
 
-        elif action == 3:   # lights_on
-            self.obs.power_usage        += 0.2
+        # ── Apply action to AC/lights ─────────────────────────────────
+        if action in [0, 1]:    # increase AC
+            for room in self.rooms:
+                if room.is_occupied:
+                    room.ac_on = True
+        elif action in [7]:     # decrease AC full
+            for room in self.rooms:
+                room.ac_on = False
+        elif action in [4]:     # decrease AC partial
+            for room in self.rooms:
+                if not room.has_approved_request:
+                    room.ac_on = random.random() > 0.3
+        elif action == 2:       # restore lights
+            for room in self.rooms:
+                if room.is_occupied:
+                    room.lights_on = True
+        elif action == 5:       # lights off empty
+            for room in self.rooms:
+                if not room.is_occupied:
+                    room.lights_on = False
+        elif action == 9:       # emergency curtail
+            for room in self.rooms:
+                if not room.has_approved_request:
+                    room.ac_on     = False
+                    room.lights_on = room.is_occupied  # keep lights for safety
 
-        elif action == 4:   # defer_heavy_load
-            self.obs.power_usage         = max(
-                0, self.obs.power_usage - 1.5
-            )
-            self.obs.complaint_level    += random.randint(0, 1)
+        # ── Update demand ─────────────────────────────────────────────
+        for room in self.rooms:
+            room.update_demand()
 
-        elif action == 5:   # do_nothing
-            pass
+        # ── Calculate power usage with floor constraint ───────────────
+        raw_power = self.obs.power_usage + power_delta
+        new_power = max(self.MIN_POWER_KW, raw_power)   # HARD floor
+        new_power = float(np.clip(new_power, self.MIN_POWER_KW, 50.0))
+
+        # Distribute supply proportionally
+        total_demand = sum(r.current_demand for r in self.rooms)
+        for room in self.rooms:
+            if total_demand > 0:
+                room.current_supply = (room.current_demand / total_demand) * new_power
+            else:
+                room.current_supply = new_power / self.num_rooms
+
+        # ── Update complaints (realistic) ─────────────────────────────
+        for room in self.rooms:
+            room.update_complaints()
+
+        # ── Aggregate metrics ─────────────────────────────────────────
+        total_complaints = sum(r.complaint_level for r in self.rooms)
+        self._complaint_history.append(total_complaints)
+
+        violations = sum(1 for r in self.rooms if r.check_violation())
+
+        priority_rooms = [r for r in self.rooms if r.has_approved_request]
+        satisfied      = sum(1 for r in priority_rooms if not r.check_violation())
+        demand_sat     = satisfied / max(1, len(priority_rooms))
+
+        # Fairness
+        supplies       = [r.current_supply for r in self.rooms]
+        avg_supply     = np.mean(supplies)
+        fairness_score = max(0.0, 1.0 - float(
+            np.std(supplies) / (avg_supply + 1e-5)
+        )) if avg_supply > 0 else 0.0
 
         # ── Advance time ──────────────────────────────────────────────
-        self.current_hour         += 1
-        self.obs.time_of_day       = self.current_hour
-        self.obs.carbon_rate       = self._get_carbon_rate(self.current_hour)
-        self.obs.current_cost     += self.obs.power_usage * self._get_tariff(
-            self.current_hour
-        )
+        self.current_hour        += 1
+        self.obs.time_of_day      = self.current_hour
+        self.obs.carbon_rate      = self._get_carbon_rate(self.current_hour)
+        self.obs.peak_hour        = self._is_peak(self.current_hour)
+        self.obs.solar_output     = self._get_solar(self.current_hour)
+
+        tariff                    = self._get_tariff(self.current_hour)
+        hour_cost                 = float(np.clip(new_power * tariff, 0, 1000))
+        self.obs.current_cost    += hour_cost
+
+        # ── Update observation ────────────────────────────────────────
+        self.obs.power_usage     = new_power
+        self.obs.avg_temperature = float(np.mean([r.temperature for r in self.rooms]))
+        self.obs.avg_occupancy   = sum(r.is_occupied for r in self.rooms) / self.num_rooms
+        self.obs.complaint_level = total_complaints
+        self.obs.fairness_score  = fairness_score
+        self.obs.total_demand    = total_demand
+        self.obs.demand_supply_ratio = total_demand / max(new_power, 0.1)
+        self.obs.violations_this_step = violations
+        self.obs.update_from_rooms(self.rooms)
+
+        # ── Episode tracking ──────────────────────────────────────────
+        self._ep_steps            += 1
+        self._ep_total_complaints += total_complaints
+        self._ep_total_cost       += hour_cost
+        self._ep_total_violations += violations
+        self._ep_demand_sat_sum   += demand_sat
 
         # ── Reward ────────────────────────────────────────────────────
-        power_saved      = max(0, power_before - self.obs.power_usage)
-        complaint_delta  = self.obs.complaint_level - prev_complaints
-        carbon_saved     = power_saved * self.obs.carbon_rate
-        fairness_score   = self._calculate_fairness()
+        power_saved     = max(0, prev_power - new_power)
+        complaint_delta = total_complaints - prev_complaints
+        carbon_saved    = power_saved * self.obs.carbon_rate
+        tod_bonus       = time_of_day_bonus(self.current_hour, new_power)
 
         reward = calculate_reward(
             power_saved     = power_saved,
             complaint_delta = complaint_delta,
             carbon_saved    = carbon_saved,
             fairness_score  = fairness_score,
-        )
+            power_usage     = new_power,
+            min_power_floor = self.MIN_POWER_KW,
+        ) + tod_bonus
 
         self.done = self.current_hour >= self.episode_hours
 
         info = {
-            "hour"       : self.current_hour,
-            "power"      : round(self.obs.power_usage, 3),
-            "complaints" : self.obs.complaint_level,
-            "cost"       : round(
-                self.obs.power_usage * self._get_tariff(self.current_hour), 4
-            ),
-            "carbon_rate": self.obs.carbon_rate,
+            "hour"              : self.current_hour,
+            "power"             : round(new_power, 3),
+            "complaints"        : total_complaints,
+            "cost"              : round(hour_cost, 4),
+            "carbon_rate"       : self.obs.carbon_rate,
+            "violations"        : violations,
+            "demand_sat"        : round(demand_sat, 3),
+            "fairness"          : round(fairness_score, 3),
+            "peak_hour"         : self.obs.peak_hour,
+            "solar"             : self.obs.solar_output,
         }
 
-        return self.obs.to_vector(), reward, self.done, info
+        return self.obs.to_vector(), round(reward, 4), self.done, info
 
     # ------------------------------------------------------------------
-    def _get_carbon_rate(self, hour):
+    def _get_carbon_rate(self, hour: int) -> float:
         if 9 <= hour <= 12 or 18 <= hour <= 22:
             return 0.82
         elif 0 <= hour <= 5:
             return 0.45
-        else:
-            return 0.63
+        return 0.63
 
-    def _get_tariff(self, hour):
-        """Rs per kWh"""
+    def _get_tariff(self, hour: int) -> float:
         if 9 <= hour <= 12 or 18 <= hour <= 22:
             return 8.5
         elif 0 <= hour <= 5:
             return 4.0
-        else:
-            return 6.0
+        return 6.0
 
-    def _calculate_fairness(self):
-        if not self.obs.occupancy:
-            return 1.0
-        occupied = sum(self.obs.occupancy)
-        if occupied == 0:
-            return 1.0
-        return round(occupied / self.num_rooms, 4)
+    def _get_solar(self, hour: int) -> float:
+        if 6 <= hour <= 18:
+            return max(0.0, 1.0 - abs(hour - 12) / 7.0)
+        return 0.0
+
+    def _is_peak(self, hour: int) -> bool:
+        return (9 <= hour <= 12) or (18 <= hour <= 22)
+
+    # ------------------------------------------------------------------
+    def episode_stats(self) -> dict:
+        steps = max(1, self._ep_steps)
+        return {
+            "demand_satisfaction" : self._ep_demand_sat_sum / steps,
+            "violations"          : self._ep_total_violations,
+            "total_cost"          : self._ep_total_cost,
+            "total_complaints"    : self._ep_total_complaints,
+        }

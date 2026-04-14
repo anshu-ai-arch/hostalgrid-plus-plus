@@ -932,3 +932,4 @@ Everything you need to:
 - ✅ Optimize multiple objectives simultaneously
 
 **Start with Task 1. Once that's working, the rest is incremental.**
+ this isthe first 
