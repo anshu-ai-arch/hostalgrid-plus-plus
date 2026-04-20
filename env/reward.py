@@ -1,218 +1,133 @@
-# env/reward.py
-# Next-level reward — more factors, fixed violation strictness per task
+"""
+env/reward.py
+
+Reward designed with COMPETING OBJECTIVES — not additive dominance.
+
+Objectives (in tension):
+    1. Comfort  — serve occupied rooms
+    2. Fairness — don't ignore any room repeatedly
+    3. Efficiency — don't waste power in empty rooms
+    4. Constraint — stay within power budget
+
+These CANNOT all be maximised simultaneously in HARD mode.
+The agent must learn genuine trade-offs.
+
+Per-room reward range: roughly [-2, +1]
+Total (mean across rooms): roughly [-2, +1]
+
+IMPORTANT DESIGN CHOICES:
+    - Comfort reward is NOT linear — diminishing returns
+    - Complaint penalty is NON-LINEAR — escalates fast
+    - Power violation overrides everything else
+    - HP rooms create CONFLICTS in hard mode (budget too small)
+"""
 
 import numpy as np
 
+PEAK_HOURS    = {9, 10, 11, 12, 13, 14, 18, 19, 20, 21}
+MAX_COMPLAINT = 10
 
-def calculate_reward(
-    power_saved:      float,
-    complaint_delta:  float,
-    carbon_saved:     float,
-    fairness_score:   float,
-    power_usage:      float = 0.0,
-    min_power_floor:  float = 0.3,
-) -> float:
+# Priority weights — HP rooms matter more
+PRIORITY_WEIGHT = {1: 0.4, 2: 0.7, 3: 1.0}
+
+
+def room_reward(room,
+                mode:      str,
+                heatwave:  bool,
+                hour:      int,
+                power_ratio: float) -> float:
     """
-    Base multi-objective reward.
-    Fixed: agent penalized for going below minimum power floor.
-    Prevents the 'turn everything off' reward hack.
+    Per-room reward with competing objectives.
+
+    Returns float in roughly [-2.0, +1.0].
+    Deliberately NOT possible to max in hard mode.
     """
-    w_energy   = 0.35
-    w_comfort  = 0.30
-    w_carbon   = 0.20
-    w_fairness = 0.15
+    pw  = PRIORITY_WEIGHT[room.priority]
+    r   = 0.0
+    app = room.appliance_sum()
 
-    reward = (
-          w_energy   *  power_saved
-        - w_comfort  *  complaint_delta
-        + w_carbon   *  carbon_saved
-        + w_fairness *  fairness_score
-    )
+    # ── Comfort objective ────────────────────────────────────────
+    if room.occupancy == 1:
+        # Diminishing returns — partial service gets less credit
+        comfort = (app / 3.0) ** 1.5 * pw   # non-linear
+        r += comfort
 
-    # Minimum power floor penalty
-    if power_usage < min_power_floor:
-        shortfall = min_power_floor - power_usage
-        reward -= shortfall * 3.0
+        # Full satisfaction bonus (hard to achieve in hard mode)
+        if room.is_satisfied():
+            r += 0.2 * pw
 
-    return float(np.clip(reward, -50.0, 50.0))
+        # Inaction penalty — doing nothing in occupied room
+        if app == 0:
+            r -= 0.4 * pw
 
-
-def calculate_task1_reward(
-    demand_sat:      float,
-    violations:      int,
-    feasible:        bool,
-    total_required:  float,
-    total_power:     float,
-    cost:            float,
-    complaints:      int,
-    power_usage:     float,
-    penalty_weights: dict,
-) -> float:
-    """
-    Task 1 — FIXED violation strictness.
-    Feasible violation = agent fault = harsh.
-    Infeasible violation = system constraint = soft.
-    """
-    reward = 0.0
-
-    # Primary: demand satisfaction
-    reward += demand_sat * 5.0
-
-    # Violation — scaled by feasibility
-    if violations > 0:
-        if feasible:
-            reward -= violations * penalty_weights["priority_violation"] * 1.5
-        else:
-            shortfall_ratio = max(0, total_required - total_power) / max(1, total_required)
-            reward -= shortfall_ratio * 1.5
-
-    # Zero violation bonus
-    if feasible and violations == 0:
-        reward += 2.5
-
-    # Cost light penalty
-    reward -= cost * penalty_weights.get("cost", 0.05) * 0.3
-
-    # Complaint moderate penalty
-    reward -= complaints * penalty_weights.get("complaints", 0.1) * 0.3
-
-    # Minimum power floor
-    if power_usage < 0.5:
-        reward -= (0.5 - power_usage) * 5.0
-
-    return float(np.clip(reward, -50.0, 50.0))
-
-
-def calculate_task2_reward(
-    demand_sat:        float,
-    violations:        int,
-    feasible:          bool,
-    fairness_score:    float,
-    misuse_count:      int,
-    misuse_handled:    int,
-    enforcement_bonus: float,
-    cost:              float,
-    complaints:        int,
-    power_usage:       float,
-    penalty_weights:   dict,
-) -> float:
-    """Task 2 — fairness + misuse enforcement."""
-    reward = 0.0
-
-    reward += demand_sat * 4.0
-
-    if fairness_score > 0.8:
-        reward += 1.5
-    elif fairness_score > 0.6:
-        reward += 0.5
+    # ── Efficiency objective ─────────────────────────────────────
     else:
-        reward -= (1.0 - fairness_score) * penalty_weights.get("fairness", 0.5)
+        # Penalise running appliances in empty room
+        if app > 0:
+            r -= app * 0.15   # per device wasted
 
-    if misuse_count > 0:
-        misuse_ratio = misuse_handled / misuse_count
-        reward += misuse_ratio * 2.0
-        if misuse_ratio < 0.3:
-            reward -= 1.5
-    reward += enforcement_bonus
+    # ── Fairness objective (medium/hard) ─────────────────────────
+    if mode in ("medium", "hard"):
+        # NON-LINEAR fairness penalty — gets much worse over time
+        ignored = room.consecutive_ignored
+        if ignored > 0:
+            fairness_penalty = -0.05 * (ignored ** 1.4)
+            r += max(fairness_penalty, -0.5)   # cap at -0.5
 
-    if violations > 0:
-        if feasible:
-            reward -= violations * penalty_weights["priority_violation"]
-        else:
-            reward -= violations * 0.5
+    # ── Complaint penalty (hard escalation) ──────────────────────
+    if mode in ("medium", "hard") and room.complaint > 0:
+        # Quadratic escalation — first few complaints small,
+        # later complaints very expensive
+        complaint_ratio = room.complaint / MAX_COMPLAINT
+        r -= (complaint_ratio ** 2) * 0.8 * pw
 
-    reward -= cost       * penalty_weights.get("cost", 0.05) * 0.3
-    reward -= complaints * penalty_weights.get("complaints", 0.1) * 0.4
+    # ── Energy cost (hard mode / peak hours) ─────────────────────
+    if mode == "hard":
+        if hour in PEAK_HOURS and room.ac == 1:
+            r -= 0.2   # AC during peak is expensive
 
-    if power_usage < 0.5:
-        reward -= (0.5 - power_usage) * 5.0
+        # Heatwave conflict — AC needed but increases power usage
+        # Creates impossible choice in hard mode (budget too small)
+        if heatwave and room.occupancy == 1 and room.ac == 0:
+            r -= 0.3   # penalty for no AC during heatwave
 
-    return float(np.clip(reward, -50.0, 50.0))
+    # ── Power constraint signal ───────────────────────────────────
+    # Low power_ratio means budget almost exhausted
+    # This signal tells agent to be conservative
+    if power_ratio < 0.2 and app > 0:
+        r -= (0.2 - power_ratio) * 0.5   # soft penalty near budget
 
-
-def calculate_task3_reward(
-    demand_sat:         float,
-    violations:         int,
-    feasible:           bool,
-    exam_satisfaction:  float,
-    fairness_violation: float,
-    misuse_ratio:       float,
-    flagged_count:      int,
-    battery_ratio:      float,
-    cost:               float,
-    carbon:             float,
-    peak_violation:     bool,
-    system_trust:       float,
-    power_usage:        float,
-    penalty_weights:    dict,
-) -> float:
-    """Task 3 — full crisis governance, 11 reward components."""
-    reward = 0.0
-
-    reward += demand_sat * 4.0
-
-    if violations > 0:
-        if feasible:
-            reward -= violations * penalty_weights["priority_violation"]
-        else:
-            reward -= violations * 1.0
-    else:
-        reward += 1.5
-
-    reward += exam_satisfaction * 1.5
-
-    if fairness_violation > 1.0:
-        reward -= fairness_violation * penalty_weights["fairness_violation"]
-    elif fairness_violation < 0.6:
-        reward += 1.0
-
-    if flagged_count > 0:
-        reward += misuse_ratio * 1.5
-        if misuse_ratio < 0.3:
-            reward -= 1.0
-
-    if 0.3 < battery_ratio < 0.7:
-        reward += 0.5
-    elif battery_ratio < 0.1 or battery_ratio > 0.95:
-        reward -= 0.5
-
-    reward -= (cost / 100.0)  * penalty_weights["cost"]
-    reward -= (carbon / 50.0) * penalty_weights["carbon_penalty"]
-
-    if peak_violation:
-        reward -= penalty_weights["peak_violation"]
-    else:
-        reward += 0.3
-
-    if system_trust > 0.9:
-        reward += 0.5
-    elif system_trust < 0.5:
-        reward -= 2.0
-
-    if power_usage < 0.3:
-        reward -= (0.3 - power_usage) * 8.0
-
-    return float(np.clip(reward, -50.0, 50.0))
+    return float(np.clip(r, -2.0, 1.0))
 
 
-def time_of_day_bonus(hour: int, power_usage: float) -> float:
-    if 9 <= hour <= 12 or 18 <= hour <= 22:
-        return 0.3 if power_usage < 5.0 else -0.2
-    elif 0 <= hour <= 5:
-        return 0.1
-    return 0.0
+def compute_reward(hostel) -> tuple:
+    """
+    Compute total reward and per-room breakdown.
 
+    Total = mean per-room reward.
+    Additional global penalty if over power budget.
 
-def complaint_momentum_penalty(complaint_history: list) -> float:
-    if len(complaint_history) < 2:
-        return 0.0
-    recent = list(complaint_history)[-3:]
-    if all(c > 0 for c in recent):
-        return -0.5 * len(recent)
-    return 0.0
+    Returns:
+        total_reward : float in [-2, +1]
+        per_room     : list of 10 floats
+    """
+    power_ratio = hostel.power_ratio()
 
+    per_room = [
+        room_reward(r,
+                    mode=hostel.mode,
+                    heatwave=hostel.heatwave,
+                    hour=hostel.hour,
+                    power_ratio=power_ratio)
+        for r in hostel.rooms
+    ]
 
-def solar_harvest_bonus(solar_output: float, hour: int, power_usage: float) -> float:
-    if solar_output > 0.5 and 9 <= hour <= 15:
-        return 0.2
-    return 0.0
+    total = float(np.mean(per_room))
+
+    # Hard budget violation penalty (global)
+    if hostel.total_power() > hostel.power_budget:
+        overage = (hostel.total_power() - hostel.power_budget)
+        violation = -(overage / hostel.power_budget) * 0.5
+        total += violation
+
+    return float(np.clip(total, -2.0, 1.0)), per_room

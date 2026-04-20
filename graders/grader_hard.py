@@ -1,169 +1,126 @@
-# graders/grader_hard.py
-# Grader for Task 3 — Crisis Governance Under Extreme Conditions
+"""
+graders/grader_hard.py
 
-def grade_hard(stats):
-    """
-    Evaluates Task 3 agent performance.
-    stats keys (matches Task3Env.episode_stats()):
-        demand_satisfaction : float (0-1)
-        violations          : int
-        total_cost          : float
-        total_carbon        : float
-        fairness_score      : float
-        peak_violations     : int
-        system_trust        : float (0-1)
-        events_encountered  : int
-    """
-    score    = 0.0
-    feedback = []
+Hard task grader — Meta OpenEnv compliant.
+Returns score in [0.0, 1.0].
 
-    # ── 1. Demand Satisfaction (20%) ──────────────────────────
-    ds = stats.get("demand_satisfaction", 0)
-    if ds > 0.85:
-        score += 0.20
-        feedback.append(("✅", "Demand satisfaction > 85%",
-                         f"{ds:.3f}", "+0.20"))
-    elif ds > 0.70:
-        score += 0.10
-        feedback.append(("⚠️ ", "Demand satisfaction > 70%",
-                         f"{ds:.3f}", "+0.10"))
-    else:
-        feedback.append(("❌", "Demand satisfaction too low",
-                         f"{ds:.3f}", "+0.00"))
+Objective:
+    Survive adversarial conditions under tight budget (3500W).
+    Prioritise HP rooms under scarcity.
+    Manage heatwave and peak hour conflicts.
 
-    # ── 2. Priority Violations (20%) ──────────────────────────
-    v = stats.get("violations", 999)
-    if v < 15:
-        score += 0.20
-        feedback.append(("✅", "Violations under control (< 15)",
-                         f"{v}", "+0.20"))
-    elif v < 30:
-        score += 0.10
-        feedback.append(("⚠️ ", "Moderate violations (< 30)",
-                         f"{v}", "+0.10"))
-    else:
-        feedback.append(("❌", "Too many violations",
-                         f"{v}", "+0.00"))
+Perfect score (1.0) is IMPOSSIBLE by design —
+budget is too tight to serve everyone.
+A score of 0.55+ is considered excellent.
 
-    # ── 3. Cost Efficiency (15%) ──────────────────────────────
-    cost = stats.get("total_cost", 9999)
-    if cost < 500:
-        score += 0.15
-        feedback.append(("✅", "Cost efficient (< 500)",
-                         f"{cost:.1f}", "+0.15"))
-    elif cost < 700:
-        score += 0.08
-        feedback.append(("⚠️ ", "Acceptable cost (< 700)",
-                         f"{cost:.1f}", "+0.08"))
-    else:
-        feedback.append(("❌", "Cost too high",
-                         f"{cost:.1f}", "+0.00"))
+Success criteria (deterministic):
+    score = weighted combination of:
+        - HP rooms served under scarcity (50%)
+        - complaint rate under adversarial load (30%)
+        - robustness across adversarial seeds (20%)
+"""
 
-    # ── 4. Carbon Footprint (10%) ─────────────────────────────
-    carbon = stats.get("total_carbon", 9999)
-    if carbon < 200:
-        score += 0.10
-        feedback.append(("✅", "Low carbon footprint (< 200)",
-                         f"{carbon:.1f}", "+0.10"))
-    elif carbon < 300:
-        score += 0.05
-        feedback.append(("⚠️ ", "Moderate carbon (< 300)",
-                         f"{carbon:.1f}", "+0.05"))
-    else:
-        feedback.append(("❌", "High carbon footprint",
-                         f"{carbon:.1f}", "+0.00"))
+import numpy as np
+from env.hostelgrid_env import HostelGridEnv
+from env.action         import Action
 
-    # ── 5. Fairness Under Crisis (15%) ────────────────────────
-    fv = stats.get("fairness_score", 999)
-    if fv < 0.70:
-        score += 0.15
-        feedback.append(("✅", "Fairness maintained (< 0.70)",
-                         f"{fv:.3f}", "+0.15"))
-    elif fv < 0.90:
-        score += 0.08
-        feedback.append(("⚠️ ", "Acceptable fairness (< 0.90)",
-                         f"{fv:.3f}", "+0.08"))
-    else:
-        feedback.append(("❌", "Fairness collapsed",
-                         f"{fv:.3f}", "+0.00"))
-
-    # ── 6. Peak Management (10%) ──────────────────────────────
-    pv = stats.get("peak_violations", 999)
-    if pv < 3:
-        score += 0.10
-        feedback.append(("✅", "Peak violations minimal (< 3)",
-                         f"{pv}", "+0.10"))
-    elif pv < 6:
-        score += 0.05
-        feedback.append(("⚠️ ", "Some peak violations (< 6)",
-                         f"{pv}", "+0.05"))
-    else:
-        feedback.append(("❌", "Too many peak violations",
-                         f"{pv}", "+0.00"))
-
-    # ── 7. System Trust (10%) ─────────────────────────────────
-    trust = stats.get("system_trust", 0)
-    if trust > 0.80:
-        score += 0.10
-        feedback.append(("✅", "System trust high (> 0.80)",
-                         f"{trust:.3f}", "+0.10"))
-    elif trust > 0.60:
-        score += 0.05
-        feedback.append(("⚠️ ", "Moderate trust (> 0.60)",
-                         f"{trust:.3f}", "+0.05"))
-    else:
-        feedback.append(("❌", "Trust collapsed",
-                         f"{trust:.3f}", "+0.00"))
-
-    # ── Bonus: Survived events (informational) ────────────────
-    events = stats.get("events_encountered", 0)
-    bonus  = 0.0
-    if events >= 3 and trust > 0.80 and v < 15:
-        bonus   = 0.05
-        score  += bonus
-        feedback.append(("⭐", f"Bonus: survived {events} events with trust intact",
-                         f"{events}", f"+{bonus:.2f}"))
-
-    # ── Print Report ──────────────────────────────────────────
-    print("\n" + "="*65)
-    print("📋  Task 3 Grader — Crisis Governance Under Extreme Conditions")
-    print("="*65)
-    print(f"  {'':2} {'Metric':<38} {'Value':>10}  {'Points':>6}")
-    print("-"*65)
-    for icon, label, value, points in feedback:
-        print(f"  {icon} {label:<38} {value:>10}  {points:>6}")
-    print("="*65)
-    print(f"  🏆  Final Score : {score:.2f} / 1.00"
-          + (f"  (includes ⭐ bonus)" if bonus > 0 else ""))
-    print("="*65)
-    return score
+TASK_NAME    = "hard"
+N_EPISODES   = 100
+EVAL_SEEDS   = [100, 200, 300, 400, 500]
+STRESS_SEEDS = [999, 1001, 1337, 2024]
 
 
-# ── Standalone runner ─────────────────────────────────────────
-if __name__ == "__main__":
-    from tasks.task_hard import train, Task3Env
-    import numpy as np
-    import random
+def grade(agent) -> dict:
+    hp_scores      = []
+    compl_scores   = []
+    stress_scores  = []
 
-    print("🚀 Running Task 3 training then grading...")
-    agent = train(episodes=1500)
+    # Standard eval
+    eps_per_seed = N_EPISODES // len(EVAL_SEEDS)
+    for seed in EVAL_SEEDS:
+        env = HostelGridEnv(mode=TASK_NAME, seed=seed)
+        for _ in range(eps_per_seed):
+            states = env.reset().to_vectors()
+            ep_hp    = []
+            ep_compl = []
 
-    # Run one clean evaluation episode
-    env = Task3Env()
-    obs = env.reset()
-    done = False
+            for _ in range(50):
+                actions           = agent.select_actions(states, greedy=True)
+                obs, reward, done, info = env.step(Action.from_list(actions))
+                states            = obs.to_vectors()
 
-    while not done:
-        s = tuple(np.clip(
-            (np.asarray(obs, dtype=np.float32) * 10).astype(int),
-            -100, 100
-        ))
-        if s in agent.q_table:
-            action = int(np.argmax(agent.q_table[s]))
-        else:
-            action = random.randint(0, 5)
-        obs, reward, done, info = env.step(action)
+                # HP satisfaction under scarcity
+                hp_rooms = [r for r in obs.rooms if r.priority > 0.8]
+                hp_sat   = sum(
+                    r.ac > 0.5 and r.fan > 0.5 and r.light > 0.5
+                    for r in hp_rooms
+                ) / max(len(hp_rooms), 1)
+                ep_hp.append(hp_sat)
 
-    # Use built-in episode_stats from Task3Env
-    final_stats = env.episode_stats()
-    grade_hard(final_stats)
+                # Complaint control
+                avg_c = np.mean([r.complaint_level for r in obs.rooms])
+                ep_compl.append(1.0 - avg_c)
+
+                if done: break
+
+            hp_scores.append(np.mean(ep_hp))
+            compl_scores.append(np.mean(ep_compl))
+
+    # Stress test on adversarial seeds
+    for seed in STRESS_SEEDS:
+        env = HostelGridEnv(mode=TASK_NAME, seed=seed)
+        for _ in range(10):
+            states = env.reset().to_vectors()
+            ep_hp  = []
+            for _ in range(50):
+                actions           = agent.select_actions(states, greedy=True)
+                obs, reward, done, info = env.step(Action.from_list(actions))
+                states            = obs.to_vectors()
+                hp_rooms = [r for r in obs.rooms if r.priority > 0.8]
+                hp_sat   = sum(
+                    r.ac > 0.5 and r.fan > 0.5 and r.light > 0.5
+                    for r in hp_rooms
+                ) / max(len(hp_rooms), 1)
+                ep_hp.append(hp_sat)
+                if done: break
+            stress_scores.append(np.mean(ep_hp))
+
+    hp_score     = float(np.mean(hp_scores))
+    compl_score  = float(np.mean(compl_scores))
+    stress_score = float(np.mean(stress_scores))
+    score        = 0.50*hp_score + 0.30*compl_score + 0.20*stress_score
+
+    # Hard mode thresholds — ceiling ~0.55
+    if   score >= 0.55: letter = "A"
+    elif score >= 0.42: letter = "B"
+    elif score >= 0.30: letter = "C"
+    elif score >= 0.18: letter = "D"
+    else:               letter = "F"
+
+    report = {
+        "task":          TASK_NAME,
+        "score":         round(score, 4),
+        "grade":         letter,
+        "hp_score":      round(hp_score, 4),
+        "complaint":     round(compl_score, 4),
+        "stress":        round(stress_score, 4),
+        "beats_random":  score > 0.15,
+        "note":          "Hard mode ceiling ~0.55 by design (budget too tight for perfect service)"
+    }
+
+    _print(report)
+    return report
+
+
+def _print(r: dict):
+    print(f"\n{'='*48}")
+    print(f"  GRADE REPORT — {r['task'].upper()}")
+    print(f"{'='*48}")
+    print(f"  Score        : {r['score']:.4f} / 1.0")
+    print(f"  Grade        : {r['grade']}")
+    print(f"  HP Sat       : {r['hp_score']:.4f}  (50%)")
+    print(f"  Complaints   : {r['complaint']:.4f}  (30%)")
+    print(f"  Stress       : {r['stress']:.4f}  (20%)")
+    print(f"  Beats random?: {'YES ✓' if r['beats_random'] else 'NO ✗'}")
+    print(f"  Note: {r['note']}")
+    print(f"{'='*48}")

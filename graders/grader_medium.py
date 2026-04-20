@@ -1,152 +1,107 @@
-# graders/grader_medium.py
-# Grader for Task 2 — Fair Enforcement Under Misuse
+"""
+graders/grader_medium.py
 
-def grade_medium(stats):
-    """
-    Evaluates Task 2 agent performance.
-    stats keys:
-        demand_satisfaction : float (0-1)
-        violations          : int
-        total_cost          : float
-        fairness            : float (0-1)
-        misuse_handled      : float (0-1)
-        complaints          : int
-        total_reward        : float
-    """
-    score    = 0.0
-    feedback = []
+Medium task grader — Meta OpenEnv compliant.
+Returns score in [0.0, 1.0].
 
-    # ── 1. Demand Satisfaction (25%) ──────────────────────────
-    ds = stats.get("demand_satisfaction", 0)
-    if ds > 0.90:
-        score += 0.25
-        feedback.append(("✅", "Demand satisfaction > 90%",
-                         f"{ds:.3f}", "+0.25"))
-    elif ds > 0.75:
-        score += 0.10
-        feedback.append(("⚠️ ", "Demand satisfaction > 75%",
-                         f"{ds:.3f}", "+0.10"))
-    else:
-        feedback.append(("❌", "Demand satisfaction too low",
-                         f"{ds:.3f}", "+0.00"))
+Objective:
+    Serve rooms fairly under power budget (6000W).
+    Reduce complaints. Prioritise HP rooms.
 
-    # ── 2. Priority Violations (25%) ──────────────────────────
-    v = stats.get("violations", 999)
-    if v == 0:
-        score += 0.25
-        feedback.append(("✅", "Zero priority violations",
-                         f"{v}", "+0.25"))
-    elif v <= 8:
-        score += 0.10
-        feedback.append(("⚠️ ", "Few violations (≤ 8)",
-                         f"{v}", "+0.10"))
-    else:
-        feedback.append(("❌", "Too many violations",
-                         f"{v}", "+0.00"))
+Success criteria (deterministic):
+    score = weighted combination of:
+        - HP satisfaction rate (40%)
+        - complaint control (35%)
+        - power efficiency (25%)
+"""
 
-    # ── 3. Cost Efficiency (20%) ──────────────────────────────
-    cost = stats.get("total_cost", 9999)
-    if cost < 500:
-        score += 0.20
-        feedback.append(("✅", "Cost efficient (< 500)",
-                         f"{cost:.1f}", "+0.20"))
-    elif cost < 700:
-        score += 0.10
-        feedback.append(("⚠️ ", "Acceptable cost (< 700)",
-                         f"{cost:.1f}", "+0.10"))
-    else:
-        feedback.append(("❌", "Cost too high",
-                         f"{cost:.1f}", "+0.00"))
+import numpy as np
+from env.hostelgrid_env import HostelGridEnv
+from env.action         import Action
 
-    # ── 4. Fairness Score (15%) ───────────────────────────────
-    fairness = stats.get("fairness", 0)
-    if fairness > 0.70:
-        score += 0.15
-        feedback.append(("✅", "Fairness maintained (> 0.70)",
-                         f"{fairness:.3f}", "+0.15"))
-    elif fairness > 0.50:
-        score += 0.08
-        feedback.append(("⚠️ ", "Acceptable fairness (> 0.50)",
-                         f"{fairness:.3f}", "+0.08"))
-    else:
-        feedback.append(("❌", "Fairness too low",
-                         f"{fairness:.3f}", "+0.00"))
-
-    # ── 5. Misuse Handled (15%) ───────────────────────────────
-    misuse = stats.get("misuse_handled", 0)
-    if misuse > 0.60:
-        score += 0.15
-        feedback.append(("✅", "Misuse handled well (> 60%)",
-                         f"{misuse:.3f}", "+0.15"))
-    elif misuse > 0.35:
-        score += 0.08
-        feedback.append(("⚠️ ", "Partial misuse handling (> 35%)",
-                         f"{misuse:.3f}", "+0.08"))
-    else:
-        feedback.append(("❌", "Misuse not handled",
-                         f"{misuse:.3f}", "+0.00"))
-
-    # ── Print Report ──────────────────────────────────────────
-    print("\n" + "="*60)
-    print("📋  Task 2 Grader — Fair Enforcement Under Misuse")
-    print("="*60)
-    print(f"  {'':2} {'Metric':<35} {'Value':>10}  {'Points':>6}")
-    print("-"*60)
-    for icon, label, value, points in feedback:
-        print(f"  {icon} {label:<35} {value:>10}  {points:>6}")
-    print("="*60)
-    print(f"  🏆  Final Score : {score:.2f} / 1.00")
-    print("="*60)
-    return score
+TASK_NAME   = "medium"
+N_EPISODES  = 100
+EVAL_SEEDS  = [100, 200, 300, 400, 500]
+MAX_COMPLAINT = 10
 
 
-# ── Standalone runner ─────────────────────────────────────────
-if __name__ == "__main__":
-    from tasks.task_medium import train
-    import numpy as np
-    import random
+def grade(agent) -> dict:
+    hp_scores       = []
+    complaint_scores = []
+    power_scores    = []
 
-    print("🚀 Running Task 2 training then grading...")
-    agent = train(episodes=500)
+    eps_per_seed = N_EPISODES // len(EVAL_SEEDS)
 
-    from tasks.task_medium import Task2Env
-    env = Task2Env()
-    obs = env.reset()
-    done = False
+    for seed in EVAL_SEEDS:
+        env = HostelGridEnv(mode=TASK_NAME, seed=seed)
+        for _ in range(eps_per_seed):
+            states = env.reset().to_vectors()
+            ep_hp    = []
+            ep_compl = []
+            ep_power = []
 
-    total_reward     = 0
-    total_violations = 0
-    total_complaints = 0
-    total_cost       = 0
-    total_ds         = 0
-    total_fairness   = 0
-    total_misuse     = 0
-    steps            = 0
+            for _ in range(50):
+                actions           = agent.select_actions(states, greedy=True)
+                obs, reward, done, info = env.step(Action.from_list(actions))
+                states            = obs.to_vectors()
 
-    while not done:
-        state = tuple(np.round(obs, 1))
-        if state in agent.q_table:
-            action = int(np.argmax(agent.q_table[state]))
-        else:
-            action = random.randint(0, 5)
-        obs, reward, done, info = env.step(action)
-        total_reward     += reward
-        total_violations += info["violations"]
-        total_complaints += info["complaints"]
-        total_cost       += info["cost"]
-        total_ds         += info["demand_satisfaction"]
-        total_fairness   += info["fairness_score"]
-        total_misuse     += info["misuse_count"]
-        steps            += 1
+                # HP satisfaction
+                hp_rooms = [r for r in obs.rooms if r.priority > 0.8]
+                hp_sat   = sum(
+                    r.ac > 0.5 and r.fan > 0.5 and r.light > 0.5
+                    for r in hp_rooms
+                ) / max(len(hp_rooms), 1)
+                ep_hp.append(hp_sat)
 
-    misuse_handled = min(1.0, total_misuse / max(1, steps) * 2)
+                # Complaint control
+                avg_complaint = np.mean(
+                    [r.complaint_level for r in obs.rooms])
+                ep_compl.append(1.0 - avg_complaint)
 
-    grade_medium({
-        "demand_satisfaction" : total_ds / max(1, steps),
-        "violations"          : total_violations,
-        "total_cost"          : total_cost,
-        "fairness"            : total_fairness / max(1, steps),
-        "misuse_handled"      : misuse_handled,
-        "complaints"          : total_complaints,
-        "total_reward"        : total_reward,
-    })
+                # Power efficiency — within budget
+                util = obs.power_used / obs.power_budget
+                power_score = 1.0 if util <= 1.0 else max(0.0, 2.0 - util)
+                ep_power.append(power_score)
+
+                if done: break
+
+            hp_scores.append(np.mean(ep_hp))
+            complaint_scores.append(np.mean(ep_compl))
+            power_scores.append(np.mean(ep_power))
+
+    hp_score      = float(np.mean(hp_scores))
+    compl_score   = float(np.mean(complaint_scores))
+    power_score   = float(np.mean(power_scores))
+    score         = 0.40*hp_score + 0.35*compl_score + 0.25*power_score
+
+    if   score >= 0.75: letter = "A"
+    elif score >= 0.60: letter = "B"
+    elif score >= 0.45: letter = "C"
+    elif score >= 0.30: letter = "D"
+    else:               letter = "F"
+
+    report = {
+        "task":          TASK_NAME,
+        "score":         round(score, 4),
+        "grade":         letter,
+        "hp_score":      round(hp_score, 4),
+        "complaint":     round(compl_score, 4),
+        "power":         round(power_score, 4),
+        "beats_random":  score > 0.25,
+    }
+
+    _print(report)
+    return report
+
+
+def _print(r: dict):
+    print(f"\n{'='*48}")
+    print(f"  GRADE REPORT — {r['task'].upper()}")
+    print(f"{'='*48}")
+    print(f"  Score        : {r['score']:.4f} / 1.0")
+    print(f"  Grade        : {r['grade']}")
+    print(f"  HP Sat       : {r['hp_score']:.4f}  (40%)")
+    print(f"  Complaints   : {r['complaint']:.4f}  (35%)")
+    print(f"  Power eff    : {r['power']:.4f}  (25%)")
+    print(f"  Beats random?: {'YES ✓' if r['beats_random'] else 'NO ✗'}")
+    print(f"{'='*48}")
