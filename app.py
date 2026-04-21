@@ -1,3 +1,4 @@
+# paste the full final app.py here
 # app.py — EnergyMind Dashboard for HF Spaces
 
 import random

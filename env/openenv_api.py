@@ -1,3 +1,4 @@
+# paste the full final openenv_api.py here
 # env/openenv_api.py
 # Fixed:
 # 1. Observation model now includes battery_level (was silently dropped)
