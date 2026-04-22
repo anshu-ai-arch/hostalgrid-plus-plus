@@ -1,0 +1,4 @@
+policy,reward_mean,reward_std,complaints_mean,hp_sat_mean,valid_rate
+Heuristic,12.172956,0.876557,0.666667,3.0,1.0
+Centralized DQN,11.746544,1.498921,1.666667,3.0,1.0
+LLM Planner + Executor,10.975116,0.675421,1.333333,3.0,1.0
