@@ -4,6 +4,7 @@ training/policy_boost.py
 Teacher policy selection + safe action wrapper.
 Supports explicit teacher modes for clean experiments.
 Adds visibility into LLM success vs fallback usage.
+Tracks whether and why the safety wrapper modified actions.
 """
 
 import os
@@ -25,6 +26,12 @@ client = OpenAI(
 )
 
 LAST_TEACHER_SOURCE = "unknown"
+LAST_SAFE_ACTIONS_CHANGED = False
+LAST_SAFE_ACTIONS_REASON_COUNTS = {
+    "empty_room_off": 0,
+    "urgent_room_protection": 0,
+    "budget_downgrade": 0,
+}
 
 
 def get_last_teacher_source() -> str:
@@ -34,6 +41,33 @@ def get_last_teacher_source() -> str:
 def _set_last_teacher_source(source: str) -> None:
     global LAST_TEACHER_SOURCE
     LAST_TEACHER_SOURCE = source
+
+
+def get_last_safe_actions_changed() -> bool:
+    return LAST_SAFE_ACTIONS_CHANGED
+
+
+def _set_last_safe_actions_changed(changed: bool) -> None:
+    global LAST_SAFE_ACTIONS_CHANGED
+    LAST_SAFE_ACTIONS_CHANGED = changed
+
+
+def get_last_safe_actions_reason_counts() -> dict:
+    return dict(LAST_SAFE_ACTIONS_REASON_COUNTS)
+
+
+def _reset_last_safe_actions_reason_counts() -> None:
+    global LAST_SAFE_ACTIONS_REASON_COUNTS
+    LAST_SAFE_ACTIONS_REASON_COUNTS = {
+        "empty_room_off": 0,
+        "urgent_room_protection": 0,
+        "budget_downgrade": 0,
+    }
+
+
+def _bump_safe_reason(reason: str) -> None:
+    global LAST_SAFE_ACTIONS_REASON_COUNTS
+    LAST_SAFE_ACTIONS_REASON_COUNTS[reason] = LAST_SAFE_ACTIONS_REASON_COUNTS.get(reason, 0) + 1
 
 
 def action_power(action_id: int) -> float:
@@ -190,14 +224,6 @@ def none_teacher_actions(env) -> list:
 
 
 def teacher_actions(env, teacher_mode: str = "llm") -> list:
-    """
-    Clean teacher selector for experiments.
-
-    Modes:
-    - none: no teacher recommendation
-    - rule: deterministic rule teacher
-    - llm: LLM teacher with fallback to rule teacher
-    """
     if teacher_mode == "none":
         _set_last_teacher_source("none")
         return none_teacher_actions(env)
@@ -233,14 +259,18 @@ def _downgrade_action(action_id: int) -> int:
 
 
 def safe_actions(env, actions: list) -> list:
+    _reset_last_safe_actions_reason_counts()
+    original_actions = list(actions)
+
     rooms = env.hostel.rooms
     actions = list(actions)
     budget = env.hostel.power_budget
     heatwave = bool(getattr(env.hostel, "heatwave", False))
 
     for i, room in enumerate(rooms):
-        if room.occupancy == 0:
+        if room.occupancy == 0 and actions[i] != 0:
             actions[i] = 0
+            _bump_safe_reason("empty_room_off")
 
     for i, room in enumerate(rooms):
         if room.occupancy != 1:
@@ -253,11 +283,14 @@ def safe_actions(env, actions: list) -> list:
             target = 7 if heatwave else 6
             if cur_service < service_count(target):
                 actions[i] = target
+                _bump_safe_reason("urgent_room_protection")
         elif room.priority >= 2 and complaint >= 1:
             if cur_service < 2:
                 actions[i] = 6
+                _bump_safe_reason("urgent_room_protection")
         elif cur_service == 0:
             actions[i] = 2 if complaint > 0 else 3
+            _bump_safe_reason("urgent_room_protection")
 
     def total_cost() -> float:
         return sum(action_power(a) for a in actions)
@@ -281,10 +314,13 @@ def safe_actions(env, actions: list) -> list:
             if new != old:
                 actions[i] = new
                 changed = True
+                _bump_safe_reason("budget_downgrade")
                 if total_cost() <= budget:
+                    _set_last_safe_actions_changed(actions != original_actions)
                     return actions
 
         if not changed:
             break
 
+    _set_last_safe_actions_changed(actions != original_actions)
     return actions
