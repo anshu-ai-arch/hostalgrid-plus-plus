@@ -1,5 +1,5 @@
-model,reward_mean,complaints_mean,hp_sat_mean,valid_rate
-Base Qwen 0.5B,10.927852245324702,7.333333333333333,3.0,1.0
-Preference-Distilled,13.008463333333333,0.0,3.0,1.0
-Grouped Preference-Distilled,13.008463333333333,0.0,3.0,1.0
-GRPO-lite,13.008463333333333,0.0,3.0,1.0
+model,reward_mean,score_mean,complaints_mean,hp_sat_mean,valid_rate
+Base Qwen 0.5B,10.927852245324702,0.8185570449064942,7.333333333333333,3.0,1.0
+Preference-Distilled,13.008463333333333,0.8601692666666668,0.0,3.0,1.0
+Grouped Preference-Distilled,13.008463333333333,0.8601692666666668,0.0,3.0,1.0
+GRPO-lite,13.008463333333333,0.8601692666666668,0.0,3.0,1.0

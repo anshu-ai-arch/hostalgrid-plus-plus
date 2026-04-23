@@ -33,6 +33,9 @@ PREF_LORA_DIR = "/content/drive/MyDrive/hostelgrid-work/outputs/energymind-prefd
 GROUP_PREF_LORA_DIR = "/content/drive/MyDrive/hostelgrid-work/outputs/energymind-group-prefdistill-qwen05b"
 GRPO_LORA_DIR = "/content/drive/MyDrive/hostelgrid-work/outputs/energymind-grpo-lite-qwen05b"
 
+MIN_REWARD_PER_STEP = -3.0
+MAX_REWARD_PER_STEP = 2.0
+
 
 def parse_strategy(text: str):
     try:
@@ -79,8 +82,18 @@ def generate_strategy(model, tokenizer, env, max_new_tokens=40):
     return strategy, valid, decoded
 
 
+def normalize_episode_reward(total_reward: float, steps_taken: int) -> float:
+    low = MIN_REWARD_PER_STEP * steps_taken
+    high = MAX_REWARD_PER_STEP * steps_taken
+    if high <= low:
+        return 0.0
+    score = (total_reward - low) / (high - low)
+    return float(np.clip(score, 0.0, 1.0))
+
+
 def eval_strategy_model(model, tokenizer, mode="medium", seeds=(100, 101, 102), steps=10):
     rewards = []
+    score_0_to_1 = []
     complaints = []
     hp_sats = []
     valids = []
@@ -105,12 +118,14 @@ def eval_strategy_model(model, tokenizer, mode="medium", seeds=(100, 101, 102), 
                 break
 
         rewards.append(total_reward)
+        score_0_to_1.append(normalize_episode_reward(total_reward, step_count))
         complaints.append(last_info["complaints"])
         hp_sats.append(last_info["hp_satisfied"])
         valids.append(valid_count / max(1, step_count))
 
     return {
         "reward_mean": float(np.mean(rewards)),
+        "score_mean": float(np.mean(score_0_to_1)),
         "complaints_mean": float(np.mean(complaints)),
         "hp_sat_mean": float(np.mean(hp_sats)),
         "valid_rate": float(np.mean(valids)),
