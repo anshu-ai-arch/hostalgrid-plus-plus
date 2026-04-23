@@ -1,15 +1,27 @@
 """
 training/policy_boost.py
 
-Teacher policy + safe action wrapper.
-This is the highest-value change for closing the gap to the heuristic.
+LLM-guided teacher policy + safe action wrapper.
+LLM suggests room-wise actions, but fallback rule teacher remains available.
 """
 
+import os
+import json
+from openai import OpenAI
 from env.action import ACTION_MAP
 
 AC_WATTS    = 900.0
 FAN_WATTS   = 75.0
 LIGHT_WATTS = 15.0
+
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN     = os.environ.get("HF_TOKEN", "")
+
+client = OpenAI(
+    api_key=HF_TOKEN if HF_TOKEN else os.environ.get("OPENAI_API_KEY", "sk-placeholder"),
+    base_url=API_BASE_URL,
+)
 
 
 def action_power(action_id: int) -> float:
@@ -55,12 +67,7 @@ def _candidate_actions(room, heatwave: bool):
     return [2, 3, 6, 0]
 
 
-def teacher_actions(env) -> list:
-    """
-    Stronger teacher than the old heuristic:
-    - serve occupied HP and complaining rooms first
-    - prefer fan+light unless heatwave / high complaint / HP needs stronger service
-    """
+def rule_teacher_actions(env) -> list:
     rooms = env.hostel.rooms
     actions = [0] * len(rooms)
     budget = env.hostel.power_budget
@@ -88,8 +95,94 @@ def teacher_actions(env) -> list:
     return actions
 
 
+def build_env_snapshot(env) -> dict:
+    rooms = env.hostel.rooms
+    return {
+        "mode": env.mode,
+        "step": env.current_step,
+        "hour": env.hostel.hour,
+        "heatwave": bool(getattr(env.hostel, "heatwave", False)),
+        "power_budget": env.hostel.power_budget,
+        "power_used": env.hostel.total_power(),
+        "rooms": [
+            {
+                "room_id": r.room_id,
+                "priority": r.priority,
+                "occupancy": r.occupancy,
+                "complaint": r.complaint,
+                "consecutive_ignored": getattr(r, "consecutive_ignored", 0),
+                "current_action": [r.ac, r.fan, r.light],
+            }
+            for r in rooms
+        ],
+    }
+
+
+def llm_teacher_actions(env) -> list:
+    snapshot = build_env_snapshot(env)
+
+    prompt = f"""
+You are an energy-governance planner for a 10-room hostel.
+
+You must choose one action 0-7 for each room.
+
+Action meanings:
+0=all_off
+1=ac_only
+2=fan_only
+3=light_only
+4=ac_fan
+5=ac_light
+6=fan_light
+7=all_on
+
+Rules:
+- Respect scarcity and complaints.
+- Occupied high-priority rooms should be protected first.
+- Empty rooms should usually be 0.
+- In heatwave, stronger cooling for important occupied rooms is preferred.
+- Budget matters. Avoid giving all rooms expensive actions.
+
+Return ONLY valid JSON like:
+{{"actions":[0,6,7,2,0,3,6,0,2,0]}}
+
+State:
+{json.dumps(snapshot)}
+""".strip()
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120,
+            temperature=0.0,
+        )
+        text = response.choices[0].message.content.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError("No JSON object found")
+        payload = json.loads(text[start:end+1])
+        actions = payload.get("actions", [])
+        if not isinstance(actions, list) or len(actions) != len(env.hostel.rooms):
+            raise ValueError("Bad action list length")
+        actions = [int(a) for a in actions]
+        if any(a < 0 or a > 7 for a in actions):
+            raise ValueError("Invalid action id")
+        return actions
+    except Exception:
+        return rule_teacher_actions(env)
+
+
+def teacher_actions(env) -> list:
+    """
+    Main teacher entry point used by training.
+    First try LLM teacher, then fallback to strong rule teacher.
+    """
+    return llm_teacher_actions(env)
+
+
 def _downgrade_action(action_id: int) -> int:
-    # Remove AC first, then reduce to minimal service, then off.
     chain = {
         7: 6,
         6: 2,
@@ -104,23 +197,15 @@ def _downgrade_action(action_id: int) -> int:
 
 
 def safe_actions(env, actions: list) -> list:
-    """
-    Post-process agent actions:
-    - empty rooms OFF
-    - protect occupied HP/complaining rooms from being fully ignored
-    - if over budget, cut low-priority rooms first
-    """
     rooms = env.hostel.rooms
     actions = list(actions)
     budget = env.hostel.power_budget
     heatwave = bool(getattr(env.hostel, "heatwave", False))
 
-    # 1. Never waste on empty rooms
     for i, room in enumerate(rooms):
         if room.occupancy == 0:
             actions[i] = 0
 
-    # 2. Protect urgent occupied rooms
     for i, room in enumerate(rooms):
         if room.occupancy != 1:
             continue
@@ -132,28 +217,25 @@ def safe_actions(env, actions: list) -> list:
             target = 7 if heatwave else 6
             if cur_service < service_count(target):
                 actions[i] = target
-
         elif room.priority >= 2 and complaint >= 1:
             if cur_service < 2:
                 actions[i] = 6
-
         elif cur_service == 0:
             actions[i] = 2 if complaint > 0 else 3
 
     def total_cost() -> float:
         return sum(action_power(a) for a in actions)
 
-    # 3. If over budget, degrade LP rooms first
     while total_cost() > budget:
         changed = False
 
         order = sorted(
             range(len(rooms)),
             key=lambda i: (
-                rooms[i].occupancy,                  # empty / less important first
-                rooms[i].priority,                   # low priority first
-                getattr(rooms[i], "complaint", 0),  # low complaint first
-                -action_power(actions[i]),          # remove expensive actions first
+                rooms[i].occupancy,
+                rooms[i].priority,
+                getattr(rooms[i], "complaint", 0),
+                -action_power(actions[i]),
             )
         )
 
