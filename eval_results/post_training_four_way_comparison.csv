@@ -1,0 +1,5 @@
+model,reward_mean,complaints_mean,hp_sat_mean,valid_rate
+Base Qwen 0.5B,10.927852245324702,7.333333333333333,3.0,1.0
+Preference-Distilled,13.008463333333333,0.0,3.0,1.0
+Grouped Preference-Distilled,13.008463333333333,0.0,3.0,1.0
+GRPO-lite,11.351191111111113,1.6666666666666667,3.0,1.0
