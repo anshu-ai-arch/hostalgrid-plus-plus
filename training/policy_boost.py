@@ -1,8 +1,9 @@
 """
 training/policy_boost.py
 
-LLM-guided teacher policy + safe action wrapper.
-LLM suggests room-wise actions, but fallback rule teacher remains available.
+Teacher policy selection + safe action wrapper.
+Supports explicit teacher modes for clean experiments.
+Adds visibility into LLM success vs fallback usage.
 """
 
 import os
@@ -10,18 +11,29 @@ import json
 from openai import OpenAI
 from env.action import ACTION_MAP
 
-AC_WATTS    = 900.0
-FAN_WATTS   = 75.0
+AC_WATTS = 900.0
+FAN_WATTS = 75.0
 LIGHT_WATTS = 15.0
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME   = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN     = os.environ.get("HF_TOKEN", "")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 client = OpenAI(
     api_key=HF_TOKEN if HF_TOKEN else os.environ.get("OPENAI_API_KEY", "sk-placeholder"),
     base_url=API_BASE_URL,
 )
+
+LAST_TEACHER_SOURCE = "unknown"
+
+
+def get_last_teacher_source() -> str:
+    return LAST_TEACHER_SOURCE
+
+
+def _set_last_teacher_source(source: str) -> None:
+    global LAST_TEACHER_SOURCE
+    LAST_TEACHER_SOURCE = source
 
 
 def action_power(action_id: int) -> float:
@@ -33,11 +45,13 @@ def service_count(action_id: int) -> int:
     return sum(ACTION_MAP[int(action_id)])
 
 
-def teacher_prob(ep: int,
-                 total_eps: int,
-                 start: float = 0.80,
-                 end: float = 0.05,
-                 frac: float = 0.55) -> float:
+def teacher_prob(
+    ep: int,
+    total_eps: int,
+    start: float = 0.80,
+    end: float = 0.05,
+    frac: float = 0.55,
+) -> float:
     cutoff = max(1, int(total_eps * frac))
     if ep >= cutoff:
         return end
@@ -81,7 +95,7 @@ def rule_teacher_actions(env) -> list:
             -rooms[i].occupancy,
             -getattr(rooms[i], "complaint", 0),
             -getattr(rooms[i], "consecutive_ignored", 0),
-        )
+        ),
     )
 
     for i in order:
@@ -150,36 +164,58 @@ State:
 {json.dumps(snapshot)}
 """.strip()
 
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=120,
-            temperature=0.0,
-        )
-        text = response.choices[0].message.content.strip()
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError("No JSON object found")
-        payload = json.loads(text[start:end+1])
-        actions = payload.get("actions", [])
-        if not isinstance(actions, list) or len(actions) != len(env.hostel.rooms):
-            raise ValueError("Bad action list length")
-        actions = [int(a) for a in actions]
-        if any(a < 0 or a > 7 for a in actions):
-            raise ValueError("Invalid action id")
-        return actions
-    except Exception:
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=120,
+        temperature=0.0,
+    )
+    text = response.choices[0].message.content.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("No JSON object found")
+    payload = json.loads(text[start:end + 1])
+    actions = payload.get("actions", [])
+    if not isinstance(actions, list) or len(actions) != len(env.hostel.rooms):
+        raise ValueError("Bad action list length")
+    actions = [int(a) for a in actions]
+    if any(a < 0 or a > 7 for a in actions):
+        raise ValueError("Invalid action id")
+    return actions
+
+
+def none_teacher_actions(env) -> list:
+    return [0] * len(env.hostel.rooms)
+
+
+def teacher_actions(env, teacher_mode: str = "llm") -> list:
+    """
+    Clean teacher selector for experiments.
+
+    Modes:
+    - none: no teacher recommendation
+    - rule: deterministic rule teacher
+    - llm: LLM teacher with fallback to rule teacher
+    """
+    if teacher_mode == "none":
+        _set_last_teacher_source("none")
+        return none_teacher_actions(env)
+
+    if teacher_mode == "rule":
+        _set_last_teacher_source("rule")
         return rule_teacher_actions(env)
 
+    if teacher_mode == "llm":
+        try:
+            actions = llm_teacher_actions(env)
+            _set_last_teacher_source("llm")
+            return actions
+        except Exception:
+            _set_last_teacher_source("rule_fallback")
+            return rule_teacher_actions(env)
 
-def teacher_actions(env) -> list:
-    """
-    Main teacher entry point used by training.
-    First try LLM teacher, then fallback to strong rule teacher.
-    """
-    return llm_teacher_actions(env)
+    raise ValueError(f"Unknown teacher_mode: {teacher_mode}")
 
 
 def _downgrade_action(action_id: int) -> int:
@@ -236,7 +272,7 @@ def safe_actions(env, actions: list) -> list:
                 rooms[i].priority,
                 getattr(rooms[i], "complaint", 0),
                 -action_power(actions[i]),
-            )
+            ),
         )
 
         for i in order:

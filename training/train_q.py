@@ -1,8 +1,9 @@
 """
 training/train_q.py
 
-Improved Q-learning with LLM-guided teacher gating:
-- teacher suggests actions
+Improved Q-learning with configurable teacher gating:
+- teacher mode can be none, rule, or llm
+- tracks whether llm mode really used llm or rule fallback
 - Q-agent suggests actions
 - per-room gate decides which action to execute
 - safe action wrapper applied after gating
@@ -14,7 +15,12 @@ import random
 import numpy as np
 from env.hostelgrid_env import HostelGridEnv
 from agent.q_agent import QAgent
-from training.policy_boost import teacher_actions, safe_actions, teacher_prob
+from training.policy_boost import (
+    teacher_actions,
+    safe_actions,
+    teacher_prob,
+    get_last_teacher_source,
+)
 
 N_EPISODES = 500
 PRINT_EVERY = 100
@@ -30,7 +36,7 @@ def _reward_value(reward):
     return float(reward.total) if hasattr(reward, "total") else float(reward)
 
 
-def gate_actions(agent, states, teacher_acts, agent_acts, p_teacher):
+def gate_actions(agent, states, teacher_acts, agent_acts, p_teacher, teacher_mode):
     final_actions = []
     teacher_used = 0
     agent_used = 0
@@ -39,6 +45,13 @@ def gate_actions(agent, states, teacher_acts, agent_acts, p_teacher):
     for room_idx, state in enumerate(states):
         t = int(teacher_acts[room_idx])
         a = int(agent_acts[room_idx])
+
+        if teacher_mode == "none":
+            final_actions.append(a)
+            agent_used += 1
+            if t == a:
+                agree += 1
+            continue
 
         if t == a:
             final_actions.append(a)
@@ -73,7 +86,7 @@ def gate_actions(agent, states, teacher_acts, agent_acts, p_teacher):
     return final_actions, stats
 
 
-def train(mode: str = "easy", n_episodes: int = N_EPISODES, seed: int = 42):
+def train(mode: str = "easy", n_episodes: int = N_EPISODES, seed: int = 42, teacher_mode: str = "llm"):
     random.seed(seed)
     np.random.seed(seed)
 
@@ -88,10 +101,16 @@ def train(mode: str = "easy", n_episodes: int = N_EPISODES, seed: int = 42):
         "teacher_pct": [],
         "agent_pct": [],
         "agree_pct": [],
+        "teacher_source_llm": 0,
+        "teacher_source_rule": 0,
+        "teacher_source_rule_fallback": 0,
+        "teacher_source_none": 0,
+        "teacher_source_unknown": 0,
         "mode": mode,
+        "teacher_mode": teacher_mode,
     }
 
-    print(f"  Q-Learning | mode={mode} | episodes={n_episodes}")
+    print(f"  Q-Learning | mode={mode} | teacher={teacher_mode} | episodes={n_episodes}")
     print(f"  {'Ep':>4} | {'avgR':>8} | {'sat':>7} | {'comp':>8} | {'hp':>5} | {'teach%':>7} | {'agent%':>7} | {'agree%':>7}")
 
     for ep in range(n_episodes):
@@ -106,10 +125,17 @@ def train(mode: str = "easy", n_episodes: int = N_EPISODES, seed: int = 42):
         while True:
             p_t = teacher_prob(ep, n_episodes, start=0.85, end=0.05, frac=0.60)
 
-            teacher_acts = teacher_actions(env)
+            teacher_acts = teacher_actions(env, teacher_mode=teacher_mode)
+            source = get_last_teacher_source()
+            source_key = f"teacher_source_{source}"
+            if source_key in history:
+                history[source_key] += 1
+            else:
+                history["teacher_source_unknown"] += 1
+
             agent_acts = agent.select_actions(states)
 
-            actions, gate_stats = gate_actions(agent, states, teacher_acts, agent_acts, p_t)
+            actions, gate_stats = gate_actions(agent, states, teacher_acts, agent_acts, p_t, teacher_mode)
             actions = safe_actions(env, actions)
 
             teacher_steps += gate_stats["teacher_used"]
@@ -166,9 +192,15 @@ if __name__ == "__main__":
     parser.add_argument("--mode", default="medium", choices=["easy", "medium", "hard"])
     parser.add_argument("--episodes", type=int, default=N_EPISODES)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--teacher", default="llm", choices=["none", "rule", "llm"])
     args = parser.parse_args()
 
-    agent, history = train(mode=args.mode, n_episodes=args.episodes, seed=args.seed)
+    agent, history = train(
+        mode=args.mode,
+        n_episodes=args.episodes,
+        seed=args.seed,
+        teacher_mode=args.teacher,
+    )
     print(agent.summary())
 
     early = np.mean(history["rewards"][:100]) if len(history["rewards"]) >= 100 else np.mean(history["rewards"])
@@ -177,3 +209,4 @@ if __name__ == "__main__":
     print(f"  Mean teacher %: {np.mean(history['teacher_pct']):.2f}")
     print(f"  Mean agent %:   {np.mean(history['agent_pct']):.2f}")
     print(f"  Mean agree %:   {np.mean(history['agree_pct']):.2f}")
+    print(f"  Teacher source counts: llm={history['teacher_source_llm']}, rule={history['teacher_source_rule']}, rule_fallback={history['teacher_source_rule_fallback']}, none={history['teacher_source_none']}, unknown={history['teacher_source_unknown']}")
