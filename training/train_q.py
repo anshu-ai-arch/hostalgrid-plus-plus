@@ -4,6 +4,7 @@ training/train_q.py
 Improved Q-learning with configurable teacher gating:
 - teacher mode can be none, rule, or llm
 - tracks whether llm mode really used llm or rule fallback
+- saves structured experiment summaries to results/experiments
 - Q-agent suggests actions
 - per-room gate decides which action to execute
 - safe action wrapper applied after gating
@@ -11,6 +12,8 @@ Improved Q-learning with configurable teacher gating:
 """
 
 import argparse
+import json
+import os
 import random
 import numpy as np
 from env.hostelgrid_env import HostelGridEnv
@@ -24,6 +27,7 @@ from training.policy_boost import (
 
 N_EPISODES = 500
 PRINT_EVERY = 100
+EXPERIMENT_DIR = "results/experiments"
 
 Q_CFG = {
     "easy": dict(lr=0.10, gamma=0.96, eps_end=0.03, eps_decay=0.995),
@@ -84,6 +88,44 @@ def gate_actions(agent, states, teacher_acts, agent_acts, p_teacher, teacher_mod
         "n_rooms": len(states),
     }
     return final_actions, stats
+
+
+def save_experiment_summary(history, mode, teacher_mode, seed, n_episodes):
+    os.makedirs(EXPERIMENT_DIR, exist_ok=True)
+
+    early = np.mean(history["rewards"][:100]) if len(history["rewards"]) >= 100 else np.mean(history["rewards"])
+    late = np.mean(history["rewards"][-100:]) if len(history["rewards"]) >= 100 else np.mean(history["rewards"])
+
+    summary = {
+        "mode": mode,
+        "teacher_mode": teacher_mode,
+        "seed": seed,
+        "episodes": n_episodes,
+        "reward_early": float(early),
+        "reward_late": float(late),
+        "reward_improving": bool(late > early),
+        "reward_mean": float(np.mean(history["rewards"])) if history["rewards"] else 0.0,
+        "satisfied_mean": float(np.mean(history["satisfied"])) if history["satisfied"] else 0.0,
+        "complaints_mean": float(np.mean(history["complaints"])) if history["complaints"] else 0.0,
+        "hp_sat_mean": float(np.mean(history["hp_sat"])) if history["hp_sat"] else 0.0,
+        "teacher_pct_mean": float(np.mean(history["teacher_pct"])) if history["teacher_pct"] else 0.0,
+        "agent_pct_mean": float(np.mean(history["agent_pct"])) if history["agent_pct"] else 0.0,
+        "agree_pct_mean": float(np.mean(history["agree_pct"])) if history["agree_pct"] else 0.0,
+        "teacher_source_counts": {
+            "llm": int(history["teacher_source_llm"]),
+            "rule": int(history["teacher_source_rule"]),
+            "rule_fallback": int(history["teacher_source_rule_fallback"]),
+            "none": int(history["teacher_source_none"]),
+            "unknown": int(history["teacher_source_unknown"]),
+        },
+    }
+
+    filename = f"{mode}_{teacher_mode}_seed{seed}_ep{n_episodes}.json"
+    path = os.path.join(EXPERIMENT_DIR, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    return path, summary
 
 
 def train(mode: str = "easy", n_episodes: int = N_EPISODES, seed: int = 42, teacher_mode: str = "llm"):
@@ -203,10 +245,17 @@ if __name__ == "__main__":
     )
     print(agent.summary())
 
-    early = np.mean(history["rewards"][:100]) if len(history["rewards"]) >= 100 else np.mean(history["rewards"])
-    late = np.mean(history["rewards"][-100:]) if len(history["rewards"]) >= 100 else np.mean(history["rewards"])
-    print(f"  Reward: early={early:.3f} -> late={late:.3f} | improving={late > early}")
-    print(f"  Mean teacher %: {np.mean(history['teacher_pct']):.2f}")
-    print(f"  Mean agent %:   {np.mean(history['agent_pct']):.2f}")
-    print(f"  Mean agree %:   {np.mean(history['agree_pct']):.2f}")
-    print(f"  Teacher source counts: llm={history['teacher_source_llm']}, rule={history['teacher_source_rule']}, rule_fallback={history['teacher_source_rule_fallback']}, none={history['teacher_source_none']}, unknown={history['teacher_source_unknown']}")
+    path, summary = save_experiment_summary(
+        history=history,
+        mode=args.mode,
+        teacher_mode=args.teacher,
+        seed=args.seed,
+        n_episodes=args.episodes,
+    )
+
+    print(f"  Reward: early={summary['reward_early']:.3f} -> late={summary['reward_late']:.3f} | improving={summary['reward_improving']}")
+    print(f"  Mean teacher %: {summary['teacher_pct_mean']:.2f}")
+    print(f"  Mean agent %:   {summary['agent_pct_mean']:.2f}")
+    print(f"  Mean agree %:   {summary['agree_pct_mean']:.2f}")
+    print(f"  Teacher source counts: llm={summary['teacher_source_counts']['llm']}, rule={summary['teacher_source_counts']['rule']}, rule_fallback={summary['teacher_source_counts']['rule_fallback']}, none={summary['teacher_source_counts']['none']}, unknown={summary['teacher_source_counts']['unknown']}")
+    print(f"  Saved summary: {path}")
