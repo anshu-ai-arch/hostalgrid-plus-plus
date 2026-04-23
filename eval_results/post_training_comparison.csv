@@ -1,0 +1,3 @@
+model,reward_mean,complaints_mean,hp_sat_mean,valid_rate
+Base Qwen 0.5B Strategy Planner,10.927852245324702,7.333333333333333,3.0,1.0
+Preference-Distilled Qwen 0.5B Planner,13.008463333333333,0.0,3.0,1.0
