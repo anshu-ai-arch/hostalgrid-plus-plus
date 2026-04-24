@@ -1,0 +1,185 @@
+Energy Mind: Training AI Systems to Operate Under Real-World Constraints
+What Is Energy Mind?
+
+Energy Mind is an OpenEnv-compatible environment designed to study how AI systems make decisions under resource constraints in human-centered settings.
+
+At its core, it is not just a simulation of energy usage. It is a structured system where an agent must allocate limited electricity across multiple rooms while responding to human signals such as occupancy, priority, and complaints.
+
+The key idea :
+most AI environments optimize a single objective, but real systems rarely behave that way.
+
+The Problem: Optimization vs Decision-Making
+
+Traditional reinforcement learning environments assume:
+
+a single objective function
+stable conditions
+immediate feedback
+no human variability
+
+In real-world systems:
+
+users have different priorities
+feedback is delayed and noisy
+actions have long-term consequences
+improving one metric often worsens another
+
+This turns the problem from optimization into decision-making under constraints.
+
+System Overview
+
+Energy Mind models a shared hostel environment where an agent manages electricity allocation under varying conditions.
+
+The environment includes:
+
+dynamic occupancy across rooms
+priority-based user needs
+complaint accumulation over time
+limited power budget
+external stress factors such as heatwaves
+
+The agent must operate continuously in this setting, adapting to changes rather than solving a static optimization problem.
+
+A Trade-off System, Not a Single Objective
+
+There is no single metric to optimize.
+
+Instead, the agent must balance multiple competing objectives:
+
+user comfort
+fairness across rooms
+high-priority requirements
+complaint minimization
+power budget constraints
+
+These objectives are inherently conflicting.
+Any decision that improves one dimension may degrade another.
+
+This creates a system where performance depends on policy quality, not just numerical optimization.
+
+Environment Dynamics and Long-Term Effects
+
+The environment is designed to capture delayed and cumulative effects.
+
+Poor decisions lead to:
+
+rising complaint levels
+dissatisfaction in high-priority rooms
+degradation of overall system performance
+
+These effects do not appear immediately, which forces the agent to consider long-term outcomes.
+
+This makes the problem closer to governance than control.
+
+Reinforcement Learning Baseline
+
+We implemented a centralized Deep Q-Network (DQN) agent to establish a baseline.
+
+The learned policy:
+
+outperformed heuristic approaches
+adapted to changing conditions
+discovered trade-offs that were difficult to encode manually
+
+This confirms that the environment provides meaningful learning signals beyond rule-based systems.
+
+LLM Integration: Lessons Learned
+
+We explored the role of large language models within this system.
+
+Direct Control Approach
+
+Initially, the LLM was used to generate low-level actions.
+
+This approach failed because:
+
+outputs were inconsistent
+actions were often unsafe
+the system lacked reliability
+Strategy-Based Control
+
+A more stable approach was to shift the LLM to high-level decision-making.
+
+Instead of controlling devices directly, the LLM selects strategies such as:
+
+prioritizing critical rooms
+reducing complaints
+conserving energy
+
+These strategies are executed by a controlled system that enforces constraints.
+
+This separation improves:
+
+safety
+interpretability
+consistency
+System Architecture
+
+The final system separates reasoning from execution:
+
+The LLM selects high-level strategies
+A constrained executor or RL agent performs low-level actions
+The environment provides feedback through structured rewards
+
+This design ensures flexibility in reasoning while maintaining strict control over execution.
+
+Training Pipeline
+
+Energy Mind follows the OpenEnv standard interface:
+
+reset()
+step(action)
+structured observations and rewards
+
+We also explored post-training approaches using:
+
+Hugging Face TRL
+LoRA-based fine-tuning
+
+One key observation:
+fine-tuning improves output structure and consistency, but not decision quality.
+
+Effective behavior emerges primarily from interaction with the environment.
+
+Key Insight
+
+There is a clear gap between:
+
+generating well-structured outputs
+making correct decisions in complex environments
+
+Energy Mind highlights this gap by requiring agents to handle trade-offs, delayed feedback, and human-centered constraints.
+
+Broader Applications
+
+The framework extends beyond energy allocation.
+
+It can be applied to:
+
+shared infrastructure systems
+smart grid management
+resource allocation under scarcity
+multi-agent coordination problems
+Core Contribution
+
+Energy Mind demonstrates that:
+
+real-world AI systems require multi-objective reasoning
+environment design is as important as model design
+separating high-level reasoning from low-level execution improves stability
+reward signals alone are insufficient without proper system structure
+Conclusion
+
+Energy Mind is not designed as a benchmark for optimization.
+
+It is a controlled environment for studying how AI systems behave when:
+
+resources are limited
+users are heterogeneous
+decisions have lasting consequences
+
+This type of setup is closer to how real-world systems operate, and provides a more realistic foundation for training and evaluating AI agents.
+
+Links
+GitHub: https://github.com/anshu-ai-arch/hostalgrid-plus-plus
+Demo: https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
