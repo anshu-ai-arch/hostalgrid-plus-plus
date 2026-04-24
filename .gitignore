@@ -12,4 +12,4 @@ logs/
 .DS_Store
 
 # VS Code
-.vscode/
+.vscode/plots/*.png
