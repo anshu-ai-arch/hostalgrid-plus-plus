@@ -1,85 +1,151 @@
 name: hostalgrid-plus-plus
-version: "1.0.0"
+version: "2.0.0"
 description: >
-  Human-Aware Energy Optimization environment where an AI agent
-  manages hostel energy under constraints of cost, carbon,
-  fairness, and human complaints.
+  EnergyMind is an OpenEnv-compatible, human-aware energy governance environment.
+  An agent must allocate scarce electricity across a shared hostel under changing
+  occupancy, room priority, delayed complaints, and power-budget constraints.
+
 author: "Anshu Tiwari"
 tags:
   - energy
+  - openenv
   - reinforcement-learning
+  - multi-agent
   - human-aware
-  - scheduling
-  - fairness
+  - governance
+  - long-horizon
 
 observation_space:
   type: object
+  description: Structured hostel state with 10 rooms and global system context.
   properties:
-    power_usage:
-      type: number
-      description: Total kW consumed
-    avg_temperature:
-      type: number
-      description: Average room temperature in Celsius
-    avg_occupancy:
-      type: number
-      description: Fraction of occupied rooms (0-1)
-    complaint_level:
+    step:
       type: integer
-      description: Current complaint count (0-10)
-    time_of_day:
+      description: Current environment step.
+    rooms:
+      type: array
+      description: Per-room state for all 10 rooms.
+      items:
+        type: object
+        properties:
+          room_id:
+            type: integer
+          occupancy:
+            type: number
+            description: 0 or 1 occupancy indicator.
+          priority:
+            type: number
+            description: Normalized room priority in [0,1].
+          complaint_level:
+            type: number
+            description: Normalized complaint level in [0,1].
+          consecutive_ignored:
+            type: number
+            description: Normalized count of ignored steps in [0,1].
+          ac:
+            type: number
+            description: AC state, 0 or 1.
+          fan:
+            type: number
+            description: Fan state, 0 or 1.
+          light:
+            type: number
+            description: Light state, 0 or 1.
+          peak_hour:
+            type: number
+            description: 1 during peak hours, else 0.
+          power_ratio:
+            type: number
+            description: Current power usage divided by power budget.
+    hour:
       type: integer
-      description: Hour of day (0-23)
-    carbon_rate:
+      description: Current simulated hour.
+    heatwave:
+      type: boolean
+      description: Whether the system is currently under heatwave conditions.
+    power_used:
       type: number
-      description: gCO2 per kWh at current hour
-    current_cost:
+      description: Current total power draw.
+    power_budget:
       type: number
-      description: Cumulative episode cost in Rs
+      description: Current power budget.
+    occupied_rooms:
+      type: integer
+      description: Number of occupied rooms.
+    total_complaints:
+      type: integer
+      description: Total complaint count across rooms.
+    mode:
+      type: string
+      enum: [easy, medium, hard]
 
 action_space:
-  type: integer
-  minimum: 0
-  maximum: 5
-  actions:
-    0: "increase_ac"
-    1: "decrease_ac"
-    2: "lights_off_empty"
-    3: "lights_on"
-    4: "defer_heavy_load"
-    5: "do_nothing"
+  type: object
+  description: >
+    Canonical action is a 10-element room action list. Each room action is an
+    integer 0..7 representing appliance combinations.
+  properties:
+    room_actions:
+      type: array
+      minItems: 10
+      maxItems: 10
+      items:
+        type: integer
+        minimum: 0
+        maximum: 7
+      description: One action per room.
+  action_meanings:
+    0: "all_off"
+    1: "ac_only"
+    2: "fan_only"
+    3: "light_only"
+    4: "ac_fan"
+    5: "ac_light"
+    6: "fan_light"
+    7: "all_on"
+  compatibility_note: >
+    Some older app/demo paths still support a legacy scalar action_id 0..5,
+    but the canonical OpenEnv interface is room_actions[10].
 
 reward:
   type: number
-  minimum: -50.0
-  maximum: 50.0
   description: >
-    Multi-objective reward combining energy savings, human comfort,
-    carbon reduction, and fairness across rooms.
+    Raw shaped reward used internally for learning. This reward reflects comfort,
+    priority satisfaction, complaints, and power-budget behavior.
+  reporting_note: >
+    Official benchmark score is normalized to [0,1] through the environment score() method.
+
+score:
+  type: number
+  minimum: 0.0
+  maximum: 1.0
+  description: >
+    Official normalized evaluation score in [0,1]. Task-specific scoring emphasizes
+    satisfaction, complaint control, fairness, and budget-aware behavior.
 
 tasks:
   - id: task_easy
     name: "Commitment-Aware Energy Allocation"
     difficulty: easy
     description: >
-      Manage energy while honoring approved supply commitments.
-      40% of rooms have guaranteed minimum supply requirements.
+      Stable setting with fewer constraints. The agent should satisfy occupied rooms
+      while avoiding waste in empty rooms.
     max_score: 1.0
 
   - id: task_medium
     name: "Fair Enforcement Under Misuse"
     difficulty: medium
     description: >
-      Detect and handle selfish energy usage while maintaining
-      fairness across all rooms.
+      Shared power budget with fairness pressure. The agent must prioritize high-priority
+      rooms, control complaints, and remain budget aware.
     max_score: 1.0
 
   - id: task_hard
     name: "Crisis Governance Under Extreme Conditions"
     difficulty: hard
     description: >
-      Manage energy during heatwaves, exam weeks, and partial
-      outages while preventing system trust collapse.
+      Tight budget, adversarial scarcity, and crisis pressure. The agent must preserve
+      service for high-priority users while controlling complaints under stress.
     max_score: 1.0
 
 entry_point: "inference.py"

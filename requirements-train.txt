@@ -1,0 +1,13 @@
+numpy>=1.21.0
+openai>=1.0.0
+pydantic>=2.0.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+torch>=2.2.0
+transformers>=4.46.0
+datasets>=3.0.0
+peft>=0.13.0
+trl>=0.11.0
+accelerate>=1.0.0
+huggingface_hub>=0.26.0
+tokenizers>=0.20.0

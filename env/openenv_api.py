@@ -1,253 +1,294 @@
-# paste the full final openenv_api.py here
-# env/openenv_api.py
-# Fixed:
-# 1. Observation model now includes battery_level (was silently dropped)
-# 2. _vec_to_obs updated for 15-feature vector (was 14)
-# 3. demand_supply_ratio denormalization corrected (* 3.0, matching to_vector)
-# 4. system_trust and battery_level passed through from info dict each step
-# 5. score() thresholds recalibrated to realistic episode ranges
+from __future__ import annotations
 
-from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import numpy as np
-import random
 
 from env.hostelgrid_env import HostelGridEnv
-from env.state import EpisodeState
+from env.action import Action as EnvAction, ACTION_MAP
+from env.observation import Observation as EnvObservation
+from env.reward_model import Reward as EnvReward
+
+TASK_TO_MODE = {
+    "task_easy": "easy",
+    "task_medium": "medium",
+    "task_hard": "hard",
+}
+
+BITS_TO_ACTION = {tuple(v): k for k, v in ACTION_MAP.items()}
 
 
-# ── Typed Models (OpenEnv spec) ───────────────────────────────
+class ObservationView:
+    def __init__(self, obs: EnvObservation):
+        self._obs = obs
 
-class Observation(BaseModel):
-    power_usage:          float
-    avg_temperature:      float
-    avg_occupancy:        float
-    complaint_level:      int
-    time_of_day:          int
-    carbon_rate:          float
-    current_cost:         float
-    system_trust:         float
-    peak_hour:            bool
-    solar_output:         float
-    battery_level:        float    # FIX: was missing from model
-    fairness_score:       float
-    demand_supply_ratio:  float
-    violations_this_step: int
+    def model_dump(self) -> Dict[str, Any]:
+        return self._obs.to_dict()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self._obs.to_dict()
+
+    def __getattr__(self, name: str):
+        return getattr(self._obs, name)
 
 
-class Action(BaseModel):
-    action_id: int   # 0-9
+class RewardView:
+    def __init__(self, reward: EnvReward, done: bool, info: Dict[str, Any]):
+        self._reward = reward
+        self.done = done
+        self.info = info
+
+    @property
+    def value(self) -> float:
+        return float(self._reward.total)
+
+    @property
+    def total(self) -> float:
+        return float(self._reward.total)
+
+    @property
+    def normalized(self) -> float:
+        return float(np.clip((self._reward.total + 2.0) / 3.0, 0.0, 1.0))
+
+    @property
+    def breakdown(self) -> Dict[str, Any]:
+        return {
+            "per_room": self._reward.per_room,
+            "satisfied_rooms": self._reward.satisfied_rooms,
+            "total_complaints": self._reward.total_complaints,
+            "hp_satisfied": self._reward.hp_satisfied,
+            "power_used": self._reward.power_used,
+            "power_budget": self._reward.power_budget,
+            "over_budget": self._reward.over_budget,
+        }
+
+    def model_dump(self) -> Dict[str, Any]:
+        return {
+            "value": self.value,
+            "normalized": self.normalized,
+            "done": self.done,
+            "breakdown": self.breakdown,
+            "info": self.info,
+        }
 
 
-class Reward(BaseModel):
-    value:     float
-    breakdown: Dict[str, float]
-    done:      bool
-    info:      Dict[str, Any]
+@dataclass
+class Action:
+    room_actions: Optional[List[int]] = None
+    action_id: Optional[int] = None
+
+    def model_dump(self) -> Dict[str, Any]:
+        return {
+            "room_actions": self.room_actions,
+            "action_id": self.action_id,
+        }
+
+    def to_env_action(self, env: "HostelGridOpenEnv") -> EnvAction:
+        if self.room_actions is not None:
+            return EnvAction.from_list(self.room_actions)
+
+        if self.action_id is not None:
+            return EnvAction.from_list(_legacy_action_to_room_actions(env._env, self.action_id))
+
+        raise ValueError("Action must provide either room_actions or action_id.")
 
 
-# ── OpenEnv-compliant Environment ─────────────────────────────
+def _bits_to_action_id(ac: int, fan: int, light: int) -> int:
+    return BITS_TO_ACTION[(int(ac), int(fan), int(light))]
+
+
+def _current_room_actions(env: HostelGridEnv) -> List[int]:
+    actions = []
+    for room in env.hostel.rooms:
+        actions.append(_bits_to_action_id(room.ac, room.fan, room.light))
+    return actions
+
+
+def _legacy_action_to_room_actions(env: HostelGridEnv, action_id: int) -> List[int]:
+    """
+    Backward-compatibility shim for old 0..5 coarse actions.
+
+    Canonical interface is room_actions[10] with values 0..7.
+    This exists only so older app/demo paths do not crash immediately.
+    """
+    action_id = int(action_id)
+    if action_id not in range(6):
+        action_id = 5
+
+    next_actions = _current_room_actions(env)
+
+    for i, room in enumerate(env.hostel.rooms):
+        ac = int(room.ac)
+        fan = int(room.fan)
+        light = int(room.light)
+
+        if action_id == 0 and room.occupancy == 1:
+            ac = 1
+        elif action_id == 1 and room.occupancy == 1:
+            ac = 0
+        elif action_id == 2 and room.occupancy == 0:
+            light = 0
+        elif action_id == 3 and room.occupancy == 1:
+            light = 1
+        elif action_id == 4:
+            if room.occupancy == 0:
+                ac, fan, light = 0, 0, 0
+            else:
+                ac = 0
+        elif action_id == 5:
+            pass
+
+        next_actions[i] = _bits_to_action_id(ac, fan, light)
+
+    return next_actions
+
 
 class HostelGridOpenEnv:
     """
-    OpenEnv spec-compliant wrapper.
+    Thin OpenEnv wrapper around the current 10-room HostelGridEnv.
 
-    Fixes in this version:
-    1. battery_level added to Observation model
-    2. _vec_to_obs handles 15-feature vector (was 14)
-    3. system_trust and battery_level read from info dict (env now writes them)
-    4. demand_supply_ratio denormalized correctly (* 3.0)
-    5. violations_this_step decoded from vec[14]
-    6. EpisodeState.update() now receives system_trust for trust tracking
+    Canonical action interface:
+        Action(room_actions=[0..7] * 10)
+
+    Backward-compatible legacy interface:
+        Action(action_id=0..5)
     """
 
-    def __init__(self, task_id: str = "task_easy", num_rooms: int = 20):
-        self.task_id       = task_id
-        self.num_rooms     = num_rooms
-        self._env          = HostelGridEnv(num_rooms=num_rooms, episode_hours=24)
-        self._obs_vec      = None
-        self._ep_state     = EpisodeState()
+    def __init__(self, task_id: str = "task_easy", seed: int = 42):
+        if task_id not in TASK_TO_MODE:
+            raise ValueError(f"Unknown task_id: {task_id}")
 
-    def reset(self) -> Observation:
-        self._obs_vec  = self._env.reset()
-        self._ep_state = EpisodeState()
-        return self._vec_to_obs(self._obs_vec)
+        self.task_id = task_id
+        self.mode = TASK_TO_MODE[task_id]
+        self.seed = seed
+        self._env = HostelGridEnv(mode=self.mode, seed=seed)
+        self._obs: Optional[ObservationView] = None
+        self._done = False
+        self._reset_episode_stats()
 
-    def step(self, action: Action):
-        obs_vec, reward_val, done, info = self._env.step(action.action_id)
-        self._obs_vec = obs_vec
+    def _reset_episode_stats(self) -> None:
+        self._total_reward = 0.0
+        self._steps = 0
+        self._over_budget_steps = 0
+        self._metric_history = {
+            "satisfaction": [],
+            "efficiency": [],
+            "hp_satisfaction": [],
+            "complaint_control": [],
+            "power_efficiency": [],
+            "budget_ok": [],
+        }
 
-        self._ep_state.update(
-            reward         = reward_val,
-            cost           = info.get("cost", 0),
-            carbon         = info.get("carbon_rate", 0) * info.get("power", 0),
-            complaints     = info.get("complaints", 0),
-            violations     = info.get("violations", 0),
-            demand_sat     = info.get("demand_sat", 0.0),
-            fairness       = info.get("fairness", 1.0),
-            peak_violation = info.get("peak_hour", False),
-            hour           = info.get("hour", 0),
-            # FIX: pass system_trust so EpisodeState can track it accurately
-            system_trust   = info.get("system_trust", 1.0),
-        )
+    def reset(self) -> ObservationView:
+        obs = self._env.reset()
+        self._obs = ObservationView(obs)
+        self._done = False
+        self._reset_episode_stats()
+        return self._obs
 
-        observation = self._vec_to_obs(obs_vec, info)
-        reward_obj  = Reward(
-            value    = reward_val,
-            breakdown = {
-                "power"         : info.get("power", 0),
-                "complaints"    : info.get("complaints", 0),
-                "cost"          : info.get("cost", 0),
-                "violations"    : info.get("violations", 0),
-                "demand_sat"    : info.get("demand_sat", 0),
-                "fairness"      : info.get("fairness", 1.0),
-                "system_trust"  : info.get("system_trust", 1.0),
-                "battery_level" : info.get("battery_level", 0.5),
-            },
-            done = done,
-            info = info,
-        )
+    def step(self, action: Action | EnvAction | List[int]):
+        if isinstance(action, list):
+            env_action = EnvAction.from_list(action)
+        elif isinstance(action, EnvAction):
+            env_action = action
+        elif isinstance(action, Action):
+            env_action = action.to_env_action(self)
+        else:
+            raise TypeError("action must be Action, env.action.Action, or list[int].")
 
-        return observation, reward_obj, done, info
+        obs, reward, done, info = self._env.step(env_action)
+        self._obs = ObservationView(obs)
+        self._done = done
+
+        self._steps += 1
+        self._total_reward += float(reward.total)
+        if info.get("over_budget", False):
+            self._over_budget_steps += 1
+
+        self._update_metrics(obs, info)
+
+        reward_view = RewardView(reward, done, info)
+        return self._obs, reward_view, done, info
+
+    def _update_metrics(self, obs: EnvObservation, info: Dict[str, Any]) -> None:
+        occupied = max(obs.occupied_rooms, 1)
+        satisfaction = info["satisfied"] / occupied
+
+        empty_rooms = [r for r in obs.rooms if r.occupancy < 0.5]
+        empty_waste = sum((r.ac + r.fan + r.light) for r in empty_rooms)
+        max_empty_waste = max(3 * len(empty_rooms), 1)
+        efficiency = 1.0 - (empty_waste / max_empty_waste)
+
+        hp_rooms = [r for r in obs.rooms if r.priority > 0.8]
+        hp_sat = sum(
+            r.ac > 0.5 and r.fan > 0.5 and r.light > 0.5
+            for r in hp_rooms
+        ) / max(len(hp_rooms), 1)
+
+        avg_complaint = float(np.mean([r.complaint_level for r in obs.rooms])) if obs.rooms else 0.0
+        complaint_control = 1.0 - avg_complaint
+
+        util = obs.power_used / max(obs.power_budget, 1.0)
+        power_efficiency = 1.0 if util <= 1.0 else max(0.0, 2.0 - util)
+
+        budget_ok = 1.0 if not info.get("over_budget", False) else 0.0
+
+        self._metric_history["satisfaction"].append(float(np.clip(satisfaction, 0.0, 1.0)))
+        self._metric_history["efficiency"].append(float(np.clip(efficiency, 0.0, 1.0)))
+        self._metric_history["hp_satisfaction"].append(float(np.clip(hp_sat, 0.0, 1.0)))
+        self._metric_history["complaint_control"].append(float(np.clip(complaint_control, 0.0, 1.0)))
+        self._metric_history["power_efficiency"].append(float(np.clip(power_efficiency, 0.0, 1.0)))
+        self._metric_history["budget_ok"].append(float(np.clip(budget_ok, 0.0, 1.0)))
+
+    def _mean_metric(self, key: str) -> float:
+        values = self._metric_history[key]
+        return float(np.mean(values)) if values else 0.0
 
     def state(self) -> Dict[str, Any]:
-        ep = self._ep_state.summary()
         return {
-            "task_id"             : self.task_id,
-            "step"                : self._ep_state.steps,
-            "done"                : self._ep_state.steps >= 24,
-            "observation"         : self._vec_to_obs(
-                                        self._obs_vec
-                                    ).model_dump() if self._obs_vec is not None else {},
-            "total_reward"        : ep["total_reward"],
-            "total_cost"          : ep["total_cost"],
-            "total_complaints"    : ep["total_complaints"],
-            "total_violations"    : ep["total_violations"],
-            "demand_satisfaction" : ep["demand_satisfaction"],
-            "system_trust"        : ep["system_trust"],
-            "avg_fairness"        : ep["avg_fairness"],
-            "collapsed"           : ep["collapsed"],
+            "task_id": self.task_id,
+            "mode": self.mode,
+            "seed": self.seed,
+            "step": self._env.current_step,
+            "done": self._done,
+            "observation": self._obs.model_dump() if self._obs is not None else None,
+            "episode": {
+                "total_reward": round(self._total_reward, 4),
+                "score": self.score(),
+                "avg_satisfaction": round(self._mean_metric("satisfaction"), 4),
+                "avg_efficiency": round(self._mean_metric("efficiency"), 4),
+                "avg_hp_satisfaction": round(self._mean_metric("hp_satisfaction"), 4),
+                "avg_complaint_control": round(self._mean_metric("complaint_control"), 4),
+                "avg_power_efficiency": round(self._mean_metric("power_efficiency"), 4),
+                "over_budget_steps": self._over_budget_steps,
+            },
         }
 
     def score(self) -> float:
-        ep = self._ep_state.summary()
+        if self._steps == 0:
+            return 0.0
 
-        if self.task_id == "task_easy":
-            return self._score_easy(ep)
-        elif self.task_id == "task_medium":
-            return self._score_medium(ep)
-        elif self.task_id == "task_hard":
-            return self._score_hard(ep)
-        return 0.0
-
-    def _score_easy(self, ep: dict) -> float:
-        score = 0.0
-
-        tr = ep["total_reward"]
-        if tr > 3.0:   score += 0.25
-        elif tr > 0:   score += 0.10
-
-        c = ep["total_cost"]
-        if c < 1200:   score += 0.25
-        elif c < 1500: score += 0.10
-
-        cp = ep["total_complaints"]
-        if cp < 40:    score += 0.25
-        elif cp < 70:  score += 0.10
-
-        v = ep["total_violations"]
-        if v == 0:     score += 0.25
-        elif v < 10:   score += 0.10
-
-        return round(min(score, 1.0), 4)
-
-    def _score_medium(self, ep: dict) -> float:
-        score = 0.0
-
-        tr = ep["total_reward"]
-        if tr > 4.0:   score += 0.20
-        elif tr > 0:   score += 0.10
-
-        c = ep["total_cost"]
-        if c < 1000:   score += 0.20
-        elif c < 1400: score += 0.10
-
-        cp = ep["total_complaints"]
-        if cp < 60:    score += 0.20
-        elif cp < 90:  score += 0.10
-
-        v = ep["total_violations"]
-        if v == 0:     score += 0.20
-        elif v < 15:   score += 0.10
-
-        f = ep["avg_fairness"]
-        if f > 0.7:    score += 0.20
-        elif f > 0.5:  score += 0.10
-
-        return round(min(score, 1.0), 4)
-
-    def _score_hard(self, ep: dict) -> float:
-        score = 0.0
-
-        ds = ep["demand_satisfaction"]
-        if ds > 0.85:   score += 0.20
-        elif ds > 0.70: score += 0.10
-
-        v = ep["total_violations"]
-        if v < 15:     score += 0.20
-        elif v < 30:   score += 0.10
-
-        c = ep["total_cost"]
-        if c < 1500:   score += 0.15
-        elif c < 2000: score += 0.08
-
-        cp = ep["total_complaints"]
-        if cp < 50:    score += 0.15
-        elif cp < 80:  score += 0.08
-
-        st = ep["system_trust"]
-        if st > 0.8:   score += 0.15
-        elif st > 0.6: score += 0.08
-
-        if not ep["collapsed"]:
-            score += 0.15
-
-        return round(min(score, 1.0), 4)
-
-    def _vec_to_obs(self, vec: np.ndarray, info: dict = None) -> Observation:
-        """
-        Convert numpy vector to typed Observation.
-        FIX: handles 15-feature vector (index 14 = violations_this_step).
-        FIX: battery_level read from vec[10] and included in model.
-        FIX: system_trust / battery_level also cross-checked with info dict.
-        FIX: demand_supply_ratio denormalized by * 3.0 (matches to_vector).
-        """
-        n = len(vec)
-        info = info or {}
-
-        # Prefer info dict for trust/battery (authoritative from env)
-        system_trust   = info.get("system_trust",   float(vec[7])  if n > 7  else 1.0)
-        battery_level  = info.get("battery_level",  float(vec[10]) if n > 10 else 0.5)
-
-        # violations: from vec[14] if available, else from info
-        if n > 14:
-            violations_this_step = int(float(vec[14]) * 20)
+        if self.mode == "easy":
+            score = (
+                0.70 * self._mean_metric("satisfaction") +
+                0.30 * self._mean_metric("efficiency")
+            )
+        elif self.mode == "medium":
+            score = (
+                0.40 * self._mean_metric("hp_satisfaction") +
+                0.35 * self._mean_metric("complaint_control") +
+                0.25 * self._mean_metric("power_efficiency")
+            )
         else:
-            violations_this_step = info.get("violations", 0)
+            score = (
+                0.50 * self._mean_metric("hp_satisfaction") +
+                0.30 * self._mean_metric("complaint_control") +
+                0.20 * self._mean_metric("budget_ok")
+            )
 
-        return Observation(
-            power_usage          = float(vec[0]) * 20.0,
-            avg_temperature      = float(vec[1]) * 40.0,
-            avg_occupancy        = float(vec[2]),
-            complaint_level      = int(float(vec[3]) * 20),
-            time_of_day          = int(float(vec[4]) * 23),
-            carbon_rate          = float(vec[5]),
-            current_cost         = float(vec[6]) * 1000.0,
-            system_trust         = system_trust,
-            peak_hour            = bool(vec[8] > 0.5) if n > 8  else False,
-            solar_output         = float(vec[9])       if n > 9  else 0.0,
-            battery_level        = battery_level,                          # FIX
-            fairness_score       = float(vec[13])      if n > 13 else 1.0,
-            demand_supply_ratio  = float(vec[12]) * 3.0 if n > 12 else 1.0,  # FIX: denorm once
-            violations_this_step = violations_this_step,                   # FIX
-        )
+        return round(float(np.clip(score, 0.0, 1.0)), 4)
+
+    def close(self) -> None:
+        self._obs = None
+        self._done = True
