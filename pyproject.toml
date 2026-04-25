@@ -1,6 +1,7 @@
+
 [project]
 name = "hostalgrid-plus-plus"
-version = "0.2.0"
+version = "0.2.1"
 description = "EnergyMind: Human-aware OpenEnv environment for constrained energy governance"
 requires-python = ">=3.10"
 dependencies = [
@@ -9,11 +10,13 @@ dependencies = [
     "pydantic>=2.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
+    "openenv-core>=0.2.0",
 ]
 
 [project.scripts]
-server = "app:main"
+server = "serve:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
