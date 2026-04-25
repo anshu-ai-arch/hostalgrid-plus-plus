@@ -46,7 +46,7 @@ def format_example(example):
 def main():
     pref_path = os.path.join(REPO_ROOT, "data", "llm_strategy_merged_preferences.jsonl")
     chosen_path = os.path.join(REPO_ROOT, "data", "llm_strategy_merged_chosen_sft.jsonl")
-    out_dir = "/content/drive/MyDrive/hostalgrid-plus-plus/experiment_runs/2026-04-25_dqn_campaign/post_training/checkpoints/energymind-prefdistill-merged-qwen05b"
+    out_dir = os.environ.get("HF_JOB_OUT_DIR", os.path.join(REPO_ROOT, "experiment_runs", "2026-04-25_dqn_campaign", "post_training", "checkpoints", "energymind-prefdistill-merged-qwen05b"))
 
     rows = build_chosen_dataset(pref_path, chosen_path)
     print("Saved chosen-only dataset:", chosen_path)
