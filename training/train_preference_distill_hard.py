@@ -17,7 +17,7 @@ from trl import SFTConfig, SFTTrainer
 from transformers import AutoTokenizer
 from huggingface_hub import HfApi
 
-BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
+BASE_MODEL = os.environ.get("HF_BASE_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
 
 
 def build_chosen_dataset(pref_path: str, chosen_path: str):
@@ -67,8 +67,8 @@ def main():
         output_dir=out_dir,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
-        learning_rate=1e-4,
-        max_steps=80,
+        learning_rate=float(os.environ.get("HF_LR", "8e-5")),
+        max_steps=int(os.environ.get("HF_MAX_STEPS", "120")),
         logging_steps=5,
         save_steps=80,
         fp16=torch.cuda.is_available(),
