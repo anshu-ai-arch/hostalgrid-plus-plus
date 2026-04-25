@@ -1,0 +1,3 @@
+model,reward_mean,complaints_mean,hp_sat_mean,valid_rate
+Base LLM + DQN Executor,10.945821600509511,9.666666666666666,3.6666666666666665,1.0
+Post-trained LLM + DQN Executor,11.120332266065132,9.666666666666666,4.0,1.0
