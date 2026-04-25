@@ -1,0 +1,4 @@
+mode,episodes,reward_early,reward_late,improving,satisfaction_last_block,complaints_last_block,hp_satisfaction_last_block,loss_last_block,epsilon_final,buffer,steps,status
+medium,1000,43.584,55.117,True,8.88,8.98,2.93,0.2978,0.0200,20000,48501,complete
+hard,1000,14.636,28.571,True,7.38,40.67,3.24,0.3227,0.0200,25000,48001,complete
+easy,1000,pending,pending,pending,pending,pending,pending,pending,pending,pending,pending,pending
