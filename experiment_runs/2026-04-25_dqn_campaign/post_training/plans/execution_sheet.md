@@ -1,23 +1,21 @@
 # Post-Training Execution Sheet
 
-## Status
+## Completed
 - Preference-distillation run: complete
-- First post-training evaluation: complete
-- Base vs Preference-Distilled comparison: complete
-- Grouped preference and GRPO-lite adapters: not yet trained
+- GRPO-lite run: complete
+- Three-way evaluation: complete
 
-## First Result
+## Current Results
 - Base reward_mean: 10.927852
 - Preference-Distilled reward_mean: 13.008463
-- Gain: 2.080611
-- hp_sat_mean preserved at 3.0
-- valid_rate preserved at 1.0
+- GRPO-lite reward_mean: -1.628150
 
 ## Interpretation
-The first post-training run successfully improved reward over the base model without sacrificing validity or high-priority satisfaction.
+- Preference distillation is currently the strongest post-training result.
+- GRPO-lite proves the environment supports online-style post-training runs, but this setup underperformed and needs tuning.
+- The benchmark now shows that post-training methods can be meaningfully compared rather than automatically succeeding.
 
 ## Next Priority
-1. Train grouped preference-distilled model
-2. Evaluate again
-3. Train GRPO-lite model
-4. Build final comparison pack
+1. Save and push these artifacts
+2. Decide whether to tune GRPO-lite or attempt grouped preference distillation
+3. Prepare final judge-facing comparison table and plot pack
