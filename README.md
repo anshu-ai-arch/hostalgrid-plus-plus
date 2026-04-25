@@ -1,6 +1,7 @@
 ## EnergyMind: Training AI Systems Under Real-World Constraints
     
 GitHub: https://github.com/anshu-ai-arch/hostalgrid-plus-plus
+
 Hugging Face Space: https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
 
 ## The Problem
