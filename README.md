@@ -137,6 +137,9 @@ For the LLM lane, we use a higher-level strategy space:
 
 The LLM chooses a strategy, and a safe executor converts it into valid room-level actions.
 
+<img width="1056" height="419" alt="image" src="https://github.com/user-attachments/assets/bedcd43f-5c93-4180-b484-a524384584eb" />
+
+
 ## Reward
 
 The raw environment reward is shaped for learning and captures:
