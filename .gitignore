@@ -1,15 +1,47 @@
+
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 
-# Virtual Environment
+# Virtual environments
 venv/
+.venv/
+env/
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
 
 # Logs
 logs/
+*.log
 
-# OS
+# OS / editors
 .DS_Store
+.vscode/
+.idea/
 
 # VS Code
 .vscode/plots/*.png
+
+# Local model / training outputs
+outputs/
+checkpoints/
+runs/
+
+# Local backups / temp artifacts
+*.bak
+*.tmp
+*.local_backup.jsonl
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+ruff_cache/
+
