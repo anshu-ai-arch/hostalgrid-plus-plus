@@ -3,6 +3,7 @@ openai>=1.0.0
 pydantic>=2.0.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
+openenv-core>=0.2.0
 torch>=2.2.0
 transformers>=4.46.0
 datasets>=3.0.0
