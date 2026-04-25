@@ -136,11 +136,11 @@ eval_results/post_training_four_way_comparison.csv
 
 ## Results
 
-Model | Reward | Complaints | HP Satisfaction | Valid Rate
-Base Qwen 0.5B | 10.93 | 7.33 | 3.0 | 1.0
-Preference-Distilled | 13.01 | 0.0 | 3.0 | 1.0
-Grouped Preference-Distilled | 13.01 | 0.0 | 3.0 | 1.0
-GRPO-lite | 11.35 | 1.67 | 3.0 | 1.0
+Model                        | Reward | Complaints | HP Satisfaction | Valid Rate
+Base Qwen 0.5B               | 10.93  | 7.33       | 3.0             | 1.0
+Preference-Distilled         | 13.01  | 0.0        | 3.0             | 1.0
+Grouped Preference-Distilled | 13.01  | 0.0        | 3.0             | 1.0
+GRPO-lite                    | 11.35  | 1.67       | 3.0             | 1.0
 
 ## What This Actually Proves
 
