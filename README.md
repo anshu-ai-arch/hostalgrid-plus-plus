@@ -1,205 +1,361 @@
-## EnergyMind: Training AI Systems Under Real-World Constraints
-    
-GitHub: https://github.com/anshu-ai-arch/hostalgrid-plus-plus
+# EnergyMind: Training AI Systems Under Real-World Constraints
 
-Hugging Face Space: https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
+EnergyMind is an OpenEnv-compatible multi-agent governance environment where AI systems learn to allocate scarce electricity across competing human actors under delayed consequences, fairness pressure, and hard resource limits.
 
-## The Problem
+Themes: Multi-Agent Interactions, Long-Horizon Planning  
+Core result: reward-informed post-training improves decision quality in a constrained human-aware environment.
 
-What happens when an AI system must decide how to allocate limited resources across multiple users with conflicting needs?
+---
 
-Most AI systems are trained in simplified environments with:
-- single objectives
-- immediate feedback
-- stable conditions
+## Submission Links
 
-Real-world systems involve:
-- scarcity
-- competing priorities
-- delayed consequences
-- unavoidable trade-offs
+- Hugging Face Space: https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
+- GitHub Repository: https://github.com/anshu-ai-arch/hostalgrid-plus-plus
+- Training Notebook (Colab): ./EnergyMind_OpenEnv_TRL_Pipeline.ipynb
+- Hugging Face Blog / Writeup: [Add blog link here](#)
+- 2-minute Video: [Add YouTube link here](#)
+- Plots/Evidences/curves : 
 
-EnergyMind is designed to train AI systems in this setting.
+---
 
-## Core Idea
+## TL;DR
 
-EnergyMind is an OpenEnv-compatible environment where an agent must allocate electricity across a shared hostel.
+- We built an OpenEnv-compatible environment for energy governance in a shared hostel with multiple human actors, delayed complaints, and hard power constraints.
+- We found that direct low-level LLM control is brittle, so we redesigned the system into a hybrid architecture: LLM planner + learned low-level executor + safe execution layer.
+- Reward-informed post-training measurably improved performance, and the repo includes reproducible scripts, evaluation artifacts, and a public Space.
 
-At every step, the agent must balance:
-- fairness vs efficiency
-- high-priority vs normal users
-- energy cost vs comfort
-- short-term relief vs long-term stability
+---
 
-This is a constrained decision-making problem, not a single-objective optimization task.
+## Problem
+
+Most AI training environments optimize one clean objective.
+
+Real systems do not.
+
+EnergyMind models a shared hostel where electricity has to be allocated under:
+- limited power budgets
+- different room priorities
+- changing occupancy
+- delayed complaint buildup
+- crisis conditions such as heatwaves
+- fairness pressure across multiple people
+
+This makes the task a governance problem, not just an optimization problem.
+
+The agent is not simply trying to “save power.” It has to decide who gets served, when, under what constraints, and at what long-term cost.
+
+---
+
+## Why This Environment Matters
+
+EnergyMind is designed to teach capabilities that matter in real-world AI systems:
+
+- reasoning under scarcity
+- balancing competing human needs
+- handling delayed consequences
+- maintaining fairness under pressure
+- recovering from bad short-term choices
+
+This makes it a strong fit for:
+
+- Theme #1: Multi-Agent Interactions  
+  because one system must manage multiple human actors with different needs and priorities
+
+- **Theme #2: Long-Horizon Planning**  
+  because bad early choices come back later as complaints, neglected urgent rooms, and budget stress
+
+---
 
 ## Environment Design
 
-### Setup
-- 10 rooms with dynamic occupancy
-- High-priority and normal users
-- Global energy budget constraint
-- Time-evolving system state
+EnergyMind is a 10-room hostel environment with:
 
-### Dynamics
-- Complaints accumulate over time
-- Ignoring users creates delayed penalties
-- Resource allocation affects future states
+- dynamic room occupancy
+- room priorities
+- complaint accumulation over time
+- easy / medium / hard modes
+- hard power-budget constraints
+- measurable rewards and normalized scores
 
-The environment requires long-horizon planning rather than reactive control.
+Every action changes the future state of the environment.
 
-## Key Challenge
+### OpenEnv interface
 
-Traditional RL vs EnergyMind:
-- Single objective → Multiple conflicting objectives
-- Immediate reward → Delayed feedback
-- Static state → Evolving system
-- No trade-offs → Continuous trade-offs
+EnergyMind exposes the standard environment flow:
+
+- `reset()`
+- `step(action)`
+- `state()`
+- `score()`
+
+The official benchmark score is normalized to [0, 1].
+
+---
+
+## Observation, Action, Reward
+
+## Observation
+
+The agent observes:
+
+- room occupancy
+- room priority
+- complaint level
+- current appliance state
+- simulated hour
+- heatwave status
+- total power used
+- current power budget
+
+The structured observation is defined in:
+- `env/observation.py`
+
+## Action
+
+### Canonical environment action
+The low-level controller uses:
+
+- `room_actions[10]`
+- one action per room
+- each room action is an integer `0..7`
+
+These correspond to appliance combinations such as:
+- `all_off`
+- `fan_only`
+- `ac_only`
+- `all_on`
+
+### High-level planner action
+For the LLM lane, we use a higher-level strategy space:
+
+- `priority_safe`
+- `complaint_rescue`
+- `energy_saver`
+- `comfort_all`
+- `shutdown_empty`
+- `do_nothing`
+
+The LLM chooses a strategy, and a safe executor converts it into valid room-level actions.
+
+## Reward
+
+The raw environment reward is shaped for learning and captures:
+
+- satisfaction of occupied rooms
+- high-priority room service
+- complaint reduction
+- budget-aware behavior
+- avoidance of waste
+
+The official final evaluation score is normalized to [0,1] through the environment scoring layer.
+
+---
 
 ## Key Insight
 
-### LLM as Controller (Failure)
-Direct LLM control leads to:
-- invalid actions
-- unstable policies
-- collapse to trivial behavior
+Our first design let the LLM directly produce low-level room actions.
 
-### LLM as Planner (Working Approach)
-Using LLMs for high-level strategy selection results in:
-- stable behavior
-- interpretable decisions
-- consistent execution
+That failed.
+
+Even when outputs looked valid, direct appliance-level control was brittle, unstable, and unsafe. This exposed an important gap between:
+- generating structured outputs
+- making good decisions under constraints
+
+So we redesigned the system into a hybrid architecture:
+
+- LLM for high-level planning
+- learned low-level executor for actual control
+- safe execution layer for reliability
+- environment reward for accountability
+
+That turned out to be the right decomposition.
+
+---
 
 ## System Architecture
 
-LLM (Strategy Planner)
-        ↓
-High-Level Strategy
-        ↓
-Safe Executor / RL Policy
-        ↓
-Environment (EnergyMind)
-        ↓
-Reward Feedback
+<img width="1027" height="490" alt="image" src="https://github.com/user-attachments/assets/1b557c6e-7898-452e-bd3d-861e9aaf6b86" />
 
-### Strategy Space
-- priority_safe
-- complaint_rescue
-- energy_saver
+EnergyMind uses a hybrid control stack:
 
-This separation ensures safety, interpretability, and reliability.
+- LLM planner chooses a high-level governance strategy
+- Q-learning or centralized DQN executor handles low-level room-level control
+- safe executor / correction layer prevents unsafe or invalid control decisions
+- environment reward provides learning signal and final evaluation
 
-## Post-Training Pipeline
+This gives us:
 
-EnergyMind supports both offline and online-style LLM post-training over a verifiable OpenEnv-compatible environment.
+- interpretability at the planning level
+- robust execution at the control level
+- reproducible training evidence
+- a clear path for closed-loop post-training
 
-### Training Stages
+---
 
-1. Build Reward-Derived Strategy Preferences
-python training/build_strategy_preferences.py
+## Training Pipeline
 
-Generates:
-data/llm_strategy_preferences.jsonl
+EnergyMind supports both baseline RL training and LLM post-training.
 
-Contains:
-- prompt
-- chosen
-- rejected
-- best_reward
-- worst_reward
+### RL baselines
 
-2. Train the Offline Preference-Distilled Planner
-python training/train_preference_distill.py
+We trained and evaluated:
 
-3. Build Grouped Online-Style Rollouts
-python training/build_grpo_rollouts.py
+- heuristic controller
+- tabular Q-learning
+- centralized DQN
 
-Records:
-- sampled completion
-- parsed strategy
-- reward
-- complaints
-- high-priority satisfaction
-- normalized advantage
+These baselines show that the environment has real learning signal and is not solved by trivial hard-coded behavior.
 
-Output:
-data/llm_strategy_grpo_rollouts.jsonl
+### LLM lane
 
-4. Train the GRPO-lite Planner
-python training/train_grpo_lite.py
+For the LLM system, we built:
 
-5. Evaluate All Post-Trained Models
-python training/evaluate_post_training.py
+- a strategy planner prompt interface
+- a safe strategy-to-action executor
+- reward-derived preference generation
+- offline preference distillation
+- grouped rollout generation
+- GRPO-lite online-style updates
 
-Outputs:
-eval_results/post_training_four_way_comparison.csv
+### Main scripts
+
+- `training/build_strategy_preferences.py`
+- `training/train_preference_distill.py`
+- `training/build_grpo_rollouts.py`
+- `training/train_grpo_lite.py`
+- `training/evaluate_post_training.py`
+
+---
 
 ## Results
 
-Model                        | Reward | Complaints | HP Satisfaction | Valid Rate
-Base Qwen 0.5B               | 10.93  | 7.33       | 3.0             | 1.0
-Preference-Distilled         | 13.01  | 0.0        | 3.0             | 1.0
-Grouped Preference-Distilled | 13.01  | 0.0        | 3.0             | 1.0
-GRPO-lite                    | 11.35  | 1.67       | 3.0             | 1.0
+## Main before/after result
 
-## What This Actually Proves
+| Model | Reward | Complaints | HP Satisfaction | Valid Rate |
+|---|---:|---:|---:|---:|
+| Base Qwen 0.5B | 10.93 | 7.33 | 3.0 | 1.0 |
+| Preference-Distilled | 13.01 | 0.0 | 3.0 | 1.0 |
+| Grouped Preference-Distilled | 13.01 | 0.0 | 3.0 | 1.0 |
+| GRPO-lite | 11.35 | 1.67 | 3.0 | 1.0 |
 
-- Direct LLM control fails in constrained environments
-- LLMs perform better as planners than controllers
-- Reward-informed offline post-training is highly effective
-- Environment-driven training outperforms pure supervised fine-tuning
-- Online RL (GRPO-style) is viable but not yet optimal in this setting
+### What changed
 
-## Key Insight
+The main improvement is not just formatting or output validity.
 
-There is a fundamental gap between:
-- generating structured outputs
-- making correct decisions
+The trained model makes **better decisions in the environment**:
+- higher total reward
+- far fewer complaints
+- preserved service for high-priority rooms
+- stable valid output rate
 
-EnergyMind exposes this gap and provides a framework to train against it.
+### Stronger run
 
-## Why This Matters
+We also validated the hybrid system with a stronger post-training setup on **Qwen 1.5B** across **1000+ episodes**, which further strengthened confidence that the environment supports serious post-training rather than only small demo runs.
 
-Most AI systems today are trained in clean, single-objective settings.
+---
 
-Real-world systems involve:
-- scarcity
-- competing users
-- delayed consequences
+## Training Evidence
 
-EnergyMind introduces these constraints explicitly and enables training for them.
+### Reward Curve
+![Reward Curve](assets/reward_curve.png)
 
-## Current Status
+### Loss Curve
+![Loss Curve](assets/loss_curve.png)
 
-The project includes:
-- full environment implementation
-- OpenEnv integration
-- RL baselines
-- LLM strategy planner
-- TRL + LoRA pipeline
-- reward-informed post-training
-- grouped preference training
-- GRPO-lite online loop
-- evaluation artifacts
+### Baseline vs Trained Comparison
+![Baseline vs Trained](assets/baseline_vs_trained.png)
 
-All components are reproducible from the repository.
+### Held-Out Evaluation
+![Held-Out Evaluation](assets/heldout_comparison.png)
+
+> Replace these image paths with the final committed plot files in your repo.
+
+---
+
+## Closed-Loop Post-Training Evidence
+
+EnergyMind is not just an evaluation benchmark.
+
+It is a training environment.
+
+In our closed-loop setup:
+
+1. the model acts inside the environment
+2. the environment returns reward
+3. reward generates learning signal
+4. the model is updated
+5. behavior improves on evaluation
+
+We demonstrate this through:
+
+- reward-informed preference post-training
+- grouped environment rollouts
+- GRPO-lite online-style updates
+- before/after evaluation artifacts
+- hybrid planner + executor improvements in actual environment behavior
+
+This is the central reason EnergyMind is useful for LLM training research.
+
+---
+
+## Safeguards and Reward Hacking Prevention
+
+We explicitly designed the system to reduce reward hacking and unsafe control behavior.
+
+Key safeguards:
+
+- the LLM does **not** directly control appliances
+- high-level planner output is constrained to a bounded strategy set
+- a safe executor converts strategy to valid room-level actions
+- invalid or malformed outputs fall back safely
+- reward measures multiple dimensions, not a single easily-gameable target
+- budget behavior, complaints, and high-priority service are all tracked
+- official scoring is normalized and auditable
+
+This makes it much harder for the model to get high reward by exploiting superficial shortcuts.
+
+---
 
 ## Reproducibility
 
-The repository provides:
-- OpenEnv-compatible environment
-- training scripts
-- evaluation pipeline
-- reproducible experiments
+## Install runtime dependencies
 
-## Conclusion
+pip install -r requirements.txt
 
-EnergyMind is not a benchmark.
+Install training dependencies
+pip install -r requirements-train.txt
+Run the environment app
+uvicorn app:app --host 0.0.0.0 --port 7860
+Run the main post-training pipeline
+python training/build_strategy_preferences.py
+python training/train_preference_distill.py
+python training/build_grpo_rollouts.py
+python training/train_grpo_lite.py
+python training/evaluate_post_training.py
+Run the notebook
+Open and execute:
 
-It is a governance environment for training AI systems that must operate under real-world constraints.
+EnergyMind_OpenEnv_TRL_Pipeline.ipynb
+Deliverables Checklist
+ OpenEnv-compatible environment
+ Hugging Face Space
+ Training notebook / script
+ Reward and loss plots
+ Before/after evaluation
+ Hugging Face blog
+ 2-minute video
+ README with all links
+Mark these only when each artifact is truly public and reachable.
 
-It demonstrates that:
-- optimization alone is insufficient
-- structured environments improve decision quality
-- separating planning from execution leads to more reliable AI systems
-  
+Repository Guide
+Important files:
+
+env/hostelgrid_env.py — main environment loop
+env/openenv_api.py — OpenEnv wrapper
+env/reward.py — reward logic
+training/llm_strategy.py — LLM planner and strategy execution
+training/evaluate_post_training.py — final model comparison
+run_training.py — top-level training/evaluation orchestration
+openenv.yaml — environment manifest
+app.py — Hugging Face Space app
+
