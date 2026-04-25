@@ -13,6 +13,7 @@ from datasets import load_dataset
 from peft import LoraConfig
 from trl import SFTConfig, SFTTrainer
 from transformers import AutoTokenizer
+from huggingface_hub import HfApi
 
 BASE_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
@@ -90,6 +91,16 @@ def main():
     trainer.train()
     trainer.model.save_pretrained(out_dir)
     trainer.processing_class.save_pretrained(out_dir)
+
+    repo_id = os.environ.get("HF_UPLOAD_REPO_ID")
+    if repo_id:
+        api = HfApi(token=os.environ.get("HF_TOKEN"))
+        api.upload_folder(
+            folder_path=out_dir,
+            repo_id=repo_id,
+            repo_type="model",
+        )
+        print("Uploaded adapter to HF repo:", repo_id)
 
     print("Saved merged preference-distilled adapter to:", out_dir)
 
