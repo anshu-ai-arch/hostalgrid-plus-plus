@@ -44,8 +44,8 @@ def format_example(example):
 
 
 def main():
-    pref_path = os.path.join(REPO_ROOT, "data", "llm_strategy_merged_preferences_hard.jsonl")
-    chosen_path = os.path.join(REPO_ROOT, "data", "llm_strategy_merged_hard_chosen_sft.jsonl")
+    pref_path = os.environ.get("HF_HARD_PREF_PATH", os.path.join(REPO_ROOT, "data", "llm_strategy_preferences_hard_train.jsonl"))
+    chosen_path = os.path.join(REPO_ROOT, "data", "llm_strategy_hard_train_chosen_sft.jsonl")
     out_dir = os.environ.get(
         "HF_JOB_OUT_DIR",
         os.path.join(REPO_ROOT, "experiment_runs", "2026-04-25_dqn_campaign", "post_training", "checkpoints", "energymind-prefdistill-hard-qwen05b"),
