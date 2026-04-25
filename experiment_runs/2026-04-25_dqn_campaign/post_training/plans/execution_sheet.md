@@ -3,6 +3,7 @@
 ## Completed
 - Preference-distillation run: complete
 - GRPO-lite run: complete
+- Tuned GRPO-lite run: complete
 - Three-way evaluation: complete
 
 ## Current Results
@@ -12,10 +13,10 @@
 
 ## Interpretation
 - Preference distillation is currently the strongest post-training result.
-- GRPO-lite proves the environment supports online-style post-training runs, but this setup underperformed and needs tuning.
-- The benchmark now shows that post-training methods can be meaningfully compared rather than automatically succeeding.
+- GRPO-lite proves the environment supports online-style post-training runs, but this current setup underperforms badly.
+- The benchmark now clearly distinguishes stronger and weaker post-training methods.
 
-## Next Priority
-1. Save and push these artifacts
-2. Decide whether to tune GRPO-lite or attempt grouped preference distillation
-3. Prepare final judge-facing comparison table and plot pack
+## Recommendation
+- Keep Preference-Distilled as the main post-training result.
+- Do not spend more local tuning time on GRPO-lite.
+- Next best path: grouped preference distillation or larger HF-credit online run with stronger setup.
