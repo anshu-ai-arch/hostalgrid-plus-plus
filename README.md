@@ -25,7 +25,7 @@ EnergyMind is an OpenEnv-compatible multi-agent governance environment where AI 
 - **GitHub Repository:** [https://github.com/anshu-ai-arch/hostalgrid-plus-plus]
 - **Training Notebook (Colab):** [https://colab.research.google.com/drive/1-nJ155ZiovbS_b5jzGITs489I8Wxpl89#scrollTo=dOZqMOZDHru2]
 - **Hugging Face Blog / Writeup:** [https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus/blob/main/BLOG.md](#)
-- **2-minute Video:** [Add YouTube link here](#)
+- **youtube Video:** [https://youtu.be/VZy5kQ5VUN0?si=yNcitynDQ11geCJi](#)
 - **Plots/Training Curves:** [https://github.com/anshu-ai-arch/hostalgrid-plus-plus/tree/main/experiment_runs/2026-04-25_dqn_campaign](#)
 
 ---
