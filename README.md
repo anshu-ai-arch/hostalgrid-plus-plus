@@ -270,6 +270,8 @@ We also validated the hybrid system with a stronger post-training setup on **Qwe
 
 ## Training Evidence
 
+### Post Training curve for Base LLM+DQN & Trained LLM+DQN
+![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/hybrid/hybrid_hard_reward_comparison.png]
 ### Loss Curve
 ![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/post_training/plots/hf_merged_prefdistill_training_loss.png]
 
