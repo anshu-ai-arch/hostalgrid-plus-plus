@@ -279,8 +279,6 @@ We also validated the hybrid system with a stronger post-training setup on **Qwe
 ### Post Training reward comparison
 ![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/post_training/plots/prefdistill_vs_base_reward.png]
 
-> Replace these image paths with the final committed plot files in your repo.
-
 ---
 
 ## Closed-Loop Post-Training Evidence
