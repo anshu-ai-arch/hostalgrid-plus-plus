@@ -21,12 +21,12 @@ EnergyMind is an OpenEnv-compatible multi-agent governance environment where AI 
 
 ## Submission Links
 
-- **Hugging Face Space:** [Add Space link here](https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus)
-- **GitHub Repository:** [Add repo link here](https://github.com/anshu-ai-arch/hostalgrid-plus-plus)
-- **Training Notebook (Colab):** [Add notebook link here](./EnergyMind_OpenEnv_TRL_Pipeline.ipynb)
-- **Hugging Face Blog / Writeup:** [Add blog link here](#)
+- **Hugging Face Space:** [https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus]
+- **GitHub Repository:** [https://github.com/anshu-ai-arch/hostalgrid-plus-plus]
+- **Training Notebook (Colab):** [https://colab.research.google.com/drive/1-nJ155ZiovbS_b5jzGITs489I8Wxpl89#scrollTo=dOZqMOZDHru2]
+- **Hugging Face Blog / Writeup:** [https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus/blob/main/BLOG.md](#)
 - **2-minute Video:** [Add YouTube link here](#)
-- **Slides (optional):** [Add slide link here](#)
+- **Plots/Training Curves:** [https://github.com/anshu-ai-arch/hostalgrid-plus-plus/tree/main/experiment_runs/2026-04-25_dqn_campaign](#)
 
 ---
 
@@ -270,17 +270,14 @@ We also validated the hybrid system with a stronger post-training setup on **Qwe
 
 ## Training Evidence
 
-### Reward Curve
-![Reward Curve](assets/reward_curve.png)
-
 ### Loss Curve
-![Loss Curve](assets/loss_curve.png)
+![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/post_training/plots/hf_merged_prefdistill_training_loss.png]
 
 ### Baseline vs Trained Comparison
-![Baseline vs Trained](assets/baseline_vs_trained.png)
+![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/post_training/plots/post_training_three_way_reward.png]
 
-### Held-Out Evaluation
-![Held-Out Evaluation](assets/heldout_comparison.png)
+### Post Training reward comparison
+![https://github.com/anshu-ai-arch/hostalgrid-plus-plus/blob/main/experiment_runs/2026-04-25_dqn_campaign/post_training/plots/prefdistill_vs_base_reward.png]
 
 > Replace these image paths with the final committed plot files in your repo.
 
