@@ -1,3 +1,15 @@
+---
+title: EnergyMind
+emoji: ⚡
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: OpenEnv-compatible multi-agent energy governance environment with RL baselines and LLM post-training.
+---
+
 # EnergyMind: Training AI Systems Under Real-World Constraints
 
 EnergyMind is a human-aware energy-governance environment where an AI system must allocate scarce electricity across competing rooms under hard power limits, room priority, complaint buildup, and delayed consequences. The project began with a simple question: can an LLM directly control a constrained real-world system? Our answer was no. Direct low-level LLM control was brittle. The system became much stronger when we redesigned it into a hybrid architecture: the LLM plans, a learned executor acts, and the environment reward closes the loop.
