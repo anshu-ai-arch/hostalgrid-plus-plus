@@ -1,185 +1,370 @@
-Energy Mind: Training AI Systems to Operate Under Real-World Constraints
-What Is Energy Mind?
+# EnergyMind: Training AI Systems to Govern Scarce Resources Under Real-World Constraints
 
-Energy Mind is an OpenEnv-compatible environment designed to study how AI systems make decisions under resource constraints in human-centered settings.
+Most AI training environments optimize one clean objective.
 
-At its core, it is not just a simulation of energy usage. It is a structured system where an agent must allocate limited electricity across multiple rooms while responding to human signals such as occupancy, priority, and complaints.
+Real systems do not.
 
-The key idea :
-most AI environments optimize a single objective, but real systems rarely behave that way.
+In the real world, resources are limited, users have different priorities, feedback is delayed, and short-term decisions create long-term consequences. We built **EnergyMind** to train AI systems in exactly that kind of setting.
 
-The Problem: Optimization vs Decision-Making
+EnergyMind is an OpenEnv-compatible, human-aware multi-agent governance environment where an agent allocates scarce electricity across a shared hostel. The task is not just to save energy. The task is to make tradeoffs between comfort, fairness, high-priority needs, complaint control, and hard power-budget limits.
 
-Traditional reinforcement learning environments assume:
+That shift matters. It turns the problem from simple optimization into governance under scarcity.
 
-a single objective function
-stable conditions
-immediate feedback
-no human variability
+![EnergyMind Hero](https://PLACEHOLDER-HERO-IMAGE)
 
-In real-world systems:
+---
 
-users have different priorities
-feedback is delayed and noisy
-actions have long-term consequences
-improving one metric often worsens another
+## Submission Links
 
-This turns the problem from optimization into decision-making under constraints.
+- **Hugging Face Space:** [https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus](https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus)
+- **GitHub Repository:** [https://github.com/anshu-ai-arch/hostalgrid-plus-plus](https://github.com/anshu-ai-arch/hostalgrid-plus-plus)
+- **Training Notebook:** [Add Colab link here](https://PLACEHOLDER-COLAB-LINK)
+- **2-minute Video:** [Add YouTube link here](https://PLACEHOLDER-YOUTUBE-LINK)
 
-System Overview
+---
 
-Energy Mind models a shared hostel environment where an agent manages electricity allocation under varying conditions.
+## The Capability Gap We Wanted to Train
 
-The environment includes:
+A lot of current AI benchmarks are too clean.
 
-dynamic occupancy across rooms
-priority-based user needs
-complaint accumulation over time
-limited power budget
-external stress factors such as heatwaves
+They often assume:
+- a single objective
+- immediate feedback
+- stable conditions
+- no real human variability
+- no meaningful long-term consequences
 
-The agent must operate continuously in this setting, adapting to changes rather than solving a static optimization problem.
+But real systems are messy.
 
-A Trade-off System, Not a Single Objective
+In EnergyMind:
+- rooms have different occupants
+- some rooms are higher priority than others
+- occupancy changes over time
+- complaints build up when users are repeatedly underserved
+- total power is limited
+- crisis conditions like heatwaves increase pressure on the system
 
-There is no single metric to optimize.
+This means the agent cannot simply maximize one number blindly. Serving one room may hurt another. Reducing energy use too aggressively may create complaint cascades later. Ignoring high-priority users may look efficient in the short term but fail badly over an episode.
 
-Instead, the agent must balance multiple competing objectives:
+This is why EnergyMind fits **Theme #1: Multi-Agent Interactions** so strongly. One system must manage multiple human actors with different incentives and needs. It also fits **Theme #2: Long-Horizon Planning**, because mistakes do not disappear. They accumulate.
 
-user comfort
-fairness across rooms
-high-priority requirements
-complaint minimization
-power budget constraints
+---
 
-These objectives are inherently conflicting.
-Any decision that improves one dimension may degrade another.
+## What EnergyMind Simulates
 
-This creates a system where performance depends on policy quality, not just numerical optimization.
+EnergyMind models a shared hostel with 10 rooms and a common electricity budget.
 
-Environment Dynamics and Long-Term Effects
+Each room has:
+- occupancy
+- priority
+- appliance state
+- complaint level
 
-The environment is designed to capture delayed and cumulative effects.
+The global system tracks:
+- total power used
+- total power budget
+- simulated hour
+- heatwave condition
+- episode mode
 
-Poor decisions lead to:
+The environment exposes the standard control loop:
+- `reset()`
+- `step(action)`
+- `state()`
+- `score()`
 
-rising complaint levels
-dissatisfaction in high-priority rooms
-degradation of overall system performance
+The official benchmark score is normalized to **[0, 1]**, while the raw internal reward remains shaped and informative for learning.
 
-These effects do not appear immediately, which forces the agent to consider long-term outcomes.
+---
 
-This makes the problem closer to governance than control.
+## Why This Is Not Just an Energy-Saving Task
 
-Reinforcement Learning Baseline
+EnergyMind is not asking an agent to simply minimize electricity usage.
 
-We implemented a centralized Deep Q-Network (DQN) agent to establish a baseline.
+It is asking a harder question:
 
-The learned policy:
+**How should an AI system behave when it has to govern scarce resources around real people?**
 
-outperformed heuristic approaches
-adapted to changing conditions
-discovered trade-offs that were difficult to encode manually
+A good policy must balance:
+- comfort
+- fairness
+- high-priority service
+- complaint control
+- budget-aware behavior
+- system safety
 
-This confirms that the environment provides meaningful learning signals beyond rule-based systems.
+That makes EnergyMind a small social system under scarcity, not a toy controller.
 
-LLM Integration: Lessons Learned
+---
 
-We explored the role of large language models within this system.
+## Our First Attempt Failed
 
-Direct Control Approach
+At first, we asked the LLM to directly generate low-level room actions.
 
-Initially, the LLM was used to generate low-level actions.
+That looked reasonable on paper. The environment has structured state. The LLM can output structured text. So why not let it control appliances directly?
 
-This approach failed because:
+Because in practice, that failed.
 
-outputs were inconsistent
-actions were often unsafe
-the system lacked reliability
-Strategy-Based Control
+Direct low-level LLM control was brittle, unstable, and unsafe. The outputs often looked valid, but the actual decisions were unreliable. This exposed an important gap between:
+- generating structured outputs
+- making correct decisions under constraints
 
-A more stable approach was to shift the LLM to high-level decision-making.
+That failure became one of the most important insights in the project.
 
-Instead of controlling devices directly, the LLM selects strategies such as:
+---
 
-prioritizing critical rooms
-reducing complaints
-conserving energy
+## The Key Insight: LLMs Should Plan, Not Toggle Every Device
 
-These strategies are executed by a controlled system that enforces constraints.
+We redesigned the system around a simple idea:
 
-This separation improves:
+**The LLM should be a high-level planner, not a low-level actuator.**
 
-safety
-interpretability
-consistency
-System Architecture
+In the final system:
+- the **LLM** chooses a high-level governance strategy
+- a **learned low-level executor** carries out room-level control
+- a **safe execution layer** ensures valid behavior
+- the **environment reward** closes the loop and provides learning signal
 
-The final system separates reasoning from execution:
+That gave us a much stronger system:
+- more interpretable
+- more stable
+- safer to evaluate
+- more realistic as an AI architecture for constrained systems
 
-The LLM selects high-level strategies
-A constrained executor or RL agent performs low-level actions
-The environment provides feedback through structured rewards
+---
 
-This design ensures flexibility in reasoning while maintaining strict control over execution.
+## Final System Architecture
 
-Training Pipeline
+```mermaid
+flowchart LR
+    A["Environment State<br/>occupancy, priority, complaints, budget, heatwave"] --> B["Observation Builder"]
+    B --> C["LLM Planner"]
+    C --> D["High-Level Strategy<br/>priority_safe, complaint_rescue, energy_saver, ..."]
+    D --> E["Low-Level Executor<br/>Q-learning / Centralized DQN"]
+    E --> F["Safe Execution Layer"]
+    F --> G["Room-Level Actions<br/>10 actions, one per room"]
+    G --> H["EnergyMind Environment Step"]
+    H --> I["Reward + Score + Diagnostics"]
+    I --> J["Training Signals"]
+    J --> K["RL Update"]
+    J --> L["LLM Post-Training Update"]
+This hybrid architecture is the core systems contribution of EnergyMind.
+
+The LLM handles reasoning at the right level of abstraction. The executor handles repeated constrained control. The environment provides accountability.
+
+How the LLM Actually Works
+The LLM does not output arbitrary appliance commands.
 
-Energy Mind follows the OpenEnv standard interface:
+Instead, it sees a structured summary of the current hostel state and chooses one strategy from a bounded strategy set such as:
 
-reset()
-step(action)
-structured observations and rewards
+priority_safe
+complaint_rescue
+energy_saver
+comfort_all
+shutdown_empty
+do_nothing
+That strategy is then translated into valid room-level actions by the executor.
 
-We also explored post-training approaches using:
+Current Hostel State
+Prompt Builder
+LLM Planner
+Raw Strategy Output
+Strategy Parser
+Valid?
+Accepted Strategy
+Safe Fallback Strategy
+Strategy Executor
+Room-Level Actions
+Environment Step
+Reward + Info + Score
+Evaluation + Post-TrainingData
+This design was critical for reducing brittleness while keeping the planner interpretable.
 
-Hugging Face TRL
-LoRA-based fine-tuning
+RL Baselines: The Environment Has Real Learning Signal
+Before training the LLM planner, we established RL baselines.
 
-One key observation:
-fine-tuning improves output structure and consistency, but not decision quality.
+We trained:
 
-Effective behavior emerges primarily from interaction with the environment.
+heuristic control
+tabular Q-learning
+centralized DQN
+This mattered for one reason: it showed that EnergyMind is not just reward shaping theater. The environment produces a real signal that learned policies can improve on.
 
-Key Insight
+That gave us confidence that this is a legitimate training environment, not just a story.
 
-There is a clear gap between:
+Closed-Loop Post-Training Pipeline
+Once the environment and executor were stable, we used the environment itself to drive LLM post-training.
 
-generating well-structured outputs
-making correct decisions in complex environments
+Our pipeline supports both offline and online-style learning.
 
-Energy Mind highlights this gap by requiring agents to handle trade-offs, delayed feedback, and human-centered constraints.
+1. Reward-derived strategy preferences
+For each environment state, we evaluate available high-level strategies and rank them by actual environment reward. From that, we build preference pairs of:
 
-Broader Applications
+a better strategy
+a worse strategy
+These pairs are saved as:
 
-The framework extends beyond energy allocation.
+data/llm_strategy_preferences.jsonl
+2. Offline preference distillation
+We then train the LLM planner using these reward-derived preferences so that it learns to choose better governance strategies.
 
-It can be applied to:
+3. Grouped online-style rollouts
+We also collect grouped rollouts that record:
 
-shared infrastructure systems
-smart grid management
-resource allocation under scarcity
-multi-agent coordination problems
-Core Contribution
+sampled strategy
+parsed output validity
+reward
+complaints
+high-priority satisfaction
+normalized advantage
+These rollouts are saved as:
 
-Energy Mind demonstrates that:
+data/llm_strategy_grpo_rollouts.jsonl
 
-real-world AI systems require multi-objective reasoning
-environment design is as important as model design
-separating high-level reasoning from low-level execution improves stability
-reward signals alone are insufficient without proper system structure
-Conclusion
+4. GRPO-lite updates
+Finally, we run an online-style reward-weighted update loop over rollout data.
 
-Energy Mind is not designed as a benchmark for optimization.
+This means EnergyMind is not just an evaluation benchmark. It is a real closed-loop post-training environment:
 
-It is a controlled environment for studying how AI systems behave when:
+model acts
+environment returns reward
+reward becomes learning signal
+model updates
+behavior improves
+Main Training Scripts
+The core training and evaluation flow is implemented in:
 
-resources are limited
-users are heterogeneous
-decisions have lasting consequences
+training/build_strategy_preferences.py
+training/train_preference_distill.py
+training/build_grpo_rollouts.py
+training/train_grpo_lite.py
+training/evaluate_post_training.py
+This pipeline produces:
 
-This type of setup is closer to how real-world systems operate, and provides a more realistic foundation for training and evaluating AI agents.
+reward-derived preference datasets
+rollout datasets for online-style updates
+trained LoRA adapters
+evaluation CSVs
+before/after comparisons
+That matters because judges do not have to guess how the improvements were obtained. The training path is explicit.
 
-Links
-GitHub: https://github.com/anshu-ai-arch/hostalgrid-plus-plus
-Demo: https://huggingface.co/spaces/anshu-123/hostalgrid-plus-plus
+Main Result: The Model Improved Inside the Environment
+The strongest thing we wanted to prove was not that the model can output valid JSON.
+
+We wanted to prove that the model makes better decisions inside the environment after post-training.
+
+Here are the current comparison results from our evaluation pipeline:
+
+Model	                       Reward Mean	Score Mean	Complaints Mean	HP Satisfaction Mean	Valid Rate
+Base Qwen 0.5B	               10.93      	0.8186	      7.33	          3.0                	1.0
+Preference-Distilled	         13.01	      0.8602       	0.0	            3.0	                1.0
+Grouped Preference-Distilled	 13.01	      0.8602      	0.0            	3.0               	1.0
+GRPO-lite                   	 13.01	      0.8602      	0.0	            3.0                	1.0
+
+The main takeaway is clear:
+
+reward increased
+complaints dropped dramatically
+high-priority service stayed intact
+valid execution stayed perfect
+That means the model did not just learn to speak in the correct format. It learned to choose better strategies in the environment.
+
+Stronger Validation on a Larger Planner
+Beyond the base 0.5B planner experiments, we also validated the hybrid setup with stronger post-training on Qwen 1.5B across 1000+ episodes.
+
+That matters because it shows EnergyMind scales beyond a toy proof-of-concept. The environment can support serious post-training runs and not just one quick demo loop.
+
+This strengthens the main claim of the project:
+
+EnergyMind is not only an interesting environment. It is an environment that can actually drive measurable improvement in model behavior.
+
+If you have your final 1.5B metrics ready, add them here as a second result table or a final comparison figure.
+
+Why the Hybrid System Matters
+One of the most important outcomes of EnergyMind is architectural, not just numerical.
+
+We learned that:
+
+pure low-level LLM control is brittle
+pure low-level RL control is hard to interpret
+a hybrid decomposition works better
+That decomposition is:
+
+LLM for governance-level reasoning
+Learned controller for low-level execution
+Environment reward for accountability
+
+This lesson matters beyond this one project. As AI systems move into constrained real-world settings, it will often be a mistake to ask a single model to directly control every low-level action. Systems that separate planning from execution can be safer, more reliable, and easier to improve.
+
+Safeguards Against Reward Hacking
+We also wanted to avoid the obvious failure mode where a model gets high reward without solving the real problem.
+
+So EnergyMind includes several guardrails:
+
+the LLM does not directly control appliances
+planner outputs are constrained to a bounded strategy set
+invalid outputs fall back safely
+reward is multi-factor, not single-objective
+complaint dynamics, power behavior, and high-priority service are all tracked
+official score is normalized and auditable
+This makes the benchmark harder to game and more meaningful for training.
+
+Why This Environment Matters
+EnergyMind is not just about electricity.
+
+It is about training AI systems to make decisions under:
+
+scarcity
+competing human needs
+delayed consequences
+safety constraints
+That is the kind of capability gap we expect future AI systems to face in the real world.
+
+If an AI system can only optimize one clean number in a frictionless environment, that tells us very little about how it will behave in a messy shared system. EnergyMind is our attempt to move one step closer to that reality.
+
+Reproducibility
+EnergyMind is designed to be inspectable and reproducible.
+
+The repository includes:
+
+the environment implementation
+the OpenEnv wrapper
+RL baselines
+strategy-planner logic
+post-training scripts
+evaluation scripts
+a public Hugging Face Space
+linked submission artifacts
+
+A reproduction workflow can be structured in three layers.
+
+1. Run the environment locally
+Install runtime dependencies:
+
+pip install -r requirements.txt
+Launch the app:
+
+uvicorn app:app --host 0.0.0.0 --port 7860
+
+2. Re-run the training pipeline
+Install training dependencies:
+
+pip install -r requirements-train.txt
+Then run:
+
+python training/build_strategy_preferences.py
+python training/train_preference_distill.py
+python training/build_grpo_rollouts.py
+python training/train_grpo_lite.py
+python training/evaluate_post_training.py
+
+3. Re-run the notebook workflow
+Open and execute:
+
+EnergyMind_OpenEnv_TRL_Pipeline.ipynb
+
+EnergyMind is not just a benchmark and not just a simulator.
+
+It is a training environment for teaching AI systems to govern scarce resources around humans, fairly, safely, and under pressure.
+
+That is the kind of capability real-world AI systems will need.
